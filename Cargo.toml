@@ -1,0 +1,25 @@
+[package]
+name = "find-the-needle"
+version = "1.0.0"
+edition = "2021"
+description = "Faithful Rust + wgpu recreation of the viral 'find the needle in the 5-million-piece haystack' game concept (Needle In A Haystack Simulator, Studio Bitdot)"
+license = "MIT"
+
+[dependencies]
+wgpu = "24"
+winit = "0.30"
+glam = "0.29"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+fastrand = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[dev-dependencies]
+naga = { version = "24", features = ["wgsl-in"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
