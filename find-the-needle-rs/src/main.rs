@@ -68,7 +68,9 @@ impl ApplicationHandler for AppHandler {
 
     fn about_to_wait(&mut self, _loop: &ActiveEventLoop) {
         if let Some(a) = self.app.as_ref() {
-            a.window.request_redraw();
+            if let Some(w) = &a.window {
+                w.request_redraw();
+            }
         }
     }
 }
@@ -114,13 +116,39 @@ fn run_selftest() {
     hud.rect(8.0, 8.0, 140.0, 30.0, [0.0, 0.0, 0.0, 0.6]);
     hud.text(16.0, 15.0, 1.4, [1.0, 1.0, 1.0, 1.0], "SELFTEST");
 
-    renderer.run_selftest(&cam, &hud, &[], &[], &[]);
+    renderer.run_selftest(&cam, &hud, &[], &[], &[], None);
     println!("SELFTEST OK — every pipeline/bind-group combination validated");
 }
 
+fn run_shot(what: &str) {
+    use find_the_needle::app::App;
+    use find_the_needle::game::GameState;
+
+    let mut app = App::new_headless((1280, 720));
+    match what {
+        "game" => {
+            app.game.state = GameState::Playing;
+            app.cam.pos = glam::Vec3::new(0.0, 1.62, 26.0);
+            app.cam.pitch = -0.12;
+        }
+        "shop" => app.game.state = GameState::Shop,
+        "research" => app.game.state = GameState::Research,
+        "paused" => app.game.state = GameState::Paused,
+        _ => {} // menu
+    }
+    app.headless_shot(&format!("/home/z/my-project/download/shot_{what}.bmp"));
+    println!("SHOT OK: {what}");
+}
+
 fn main() {
-    if std::env::args().any(|a| a == "--selftest") {
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--selftest") {
         run_selftest();
+        return;
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--shot") {
+        let what = args.get(pos + 1).map(|s| s.as_str()).unwrap_or("menu");
+        run_shot(what);
         return;
     }
     let event_loop = EventLoop::builder().build().expect("event loop");

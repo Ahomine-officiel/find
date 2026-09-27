@@ -36,7 +36,7 @@ pub struct Ball {
 }
 
 pub struct App {
-    pub window: std::sync::Arc<winit::window::Window>,
+    pub window: Option<std::sync::Arc<winit::window::Window>>,
     pub renderer: Renderer,
     pub settings: Settings,
     pub world: World,
@@ -67,9 +67,19 @@ pub struct App {
     bob_phase: f32,
 
     pub quit: bool,
+    headless_size: (u32, u32),
 }
 
 impl App {
+    fn device_desc() -> wgpu::DeviceDescriptor<'static> {
+        wgpu::DeviceDescriptor {
+            label: Some("find-the-needle"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            memory_hints: wgpu::MemoryHints::default(),
+        }
+    }
+
     pub fn new(window: std::sync::Arc<winit::window::Window>) -> Self {
         let settings = Settings::load();
         let size = window.inner_size();
@@ -83,18 +93,45 @@ impl App {
             force_fallback_adapter: false,
         }))
         .expect("no suitable GPU adapter");
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("find-the-needle"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
-                memory_hints: wgpu::MemoryHints::default(),
-                
-            },
-            None,
-        ))
-        .expect("device creation failed");
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Self::device_desc(), None))
+                .expect("device creation failed");
+        Self::build(
+            (size.width, size.height),
+            Some(surface),
+            &adapter,
+            device,
+            queue,
+            Some(window),
+            settings,
+        )
+    }
 
+    /// Headless app (no window): for `--shot` UI captures on any adapter.
+    pub fn new_headless(size: (u32, u32)) -> Self {
+        let settings = Settings::load();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::default());
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .expect("headless: no GPU adapter found");
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&Self::device_desc(), None))
+                .expect("headless: device creation failed");
+        Self::build(size, None, &adapter, device, queue, None, settings)
+    }
+
+    fn build(
+        size: (u32, u32),
+        surface: Option<wgpu::Surface<'static>>,
+        adapter: &wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        window: Option<std::sync::Arc<winit::window::Window>>,
+        settings: Settings,
+    ) -> Self {
         let seed = Rng::new(0xF1EED).next_u64()
             ^ std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -103,15 +140,7 @@ impl App {
         let world = World::new(seed, settings.quality.straw_count());
         let game = Game::new(seed, false);
 
-        let mut renderer = Renderer::new(
-            device,
-            queue,
-            Some(surface),
-            &adapter,
-            (size.width, size.height),
-            &world,
-            &settings,
-        );
+        let mut renderer = Renderer::new(device, queue, surface, adapter, size, &world, &settings);
         renderer.set_present_mode(settings.vsync);
 
         let mut balls = Vec::new();
@@ -125,6 +154,7 @@ impl App {
 
         App {
             window,
+            headless_size: size,
             renderer,
             settings,
             world,
@@ -152,6 +182,35 @@ impl App {
             bob_phase: 0.0,
             quit: false,
         }
+    }
+
+    fn win_size(&self) -> (f32, f32) {
+        match &self.window {
+            Some(w) => {
+                let s = w.inner_size();
+                (s.width.max(1) as f32, s.height.max(1) as f32)
+            }
+            None => (self.headless_size.0.max(1) as f32, self.headless_size.1.max(1) as f32),
+        }
+    }
+
+    /// Headless screenshot: builds the HUD for the current state, renders one
+    /// frame offscreen and writes a .bmp for inspection.
+    pub fn headless_shot(&mut self, path: &str) {
+        self.build_hud();
+        let hud_snapshot = Hud {
+            quads: std::mem::take(&mut self.pending_hud),
+        };
+        let (straw_dyn, prop_insts, batches) = self.collect_instances();
+        self.renderer.run_selftest(
+            &self.cam,
+            &hud_snapshot,
+            &straw_dyn,
+            &prop_insts,
+            &batches,
+            Some(path),
+        );
+        eprintln!("shot written: {path}");
     }
 
     pub fn resize(&mut self, w: u32, h: u32) {
@@ -446,15 +505,19 @@ impl App {
             return;
         }
         use winit::window::CursorGrabMode;
-        let _ = self.window.set_cursor_grab(CursorGrabMode::Locked);
-        let _ = self.window.set_cursor_visible(false);
+        if let Some(w) = &self.window {
+            let _ = w.set_cursor_grab(CursorGrabMode::Locked);
+            let _ = w.set_cursor_visible(false);
+        }
         self.pointer_locked = true;
     }
 
     fn unlock_pointer(&mut self) {
         use winit::window::CursorGrabMode;
-        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
-        let _ = self.window.set_cursor_visible(true);
+        if let Some(w) = &self.window {
+            let _ = w.set_cursor_grab(CursorGrabMode::None);
+            let _ = w.set_cursor_visible(true);
+        }
         self.pointer_locked = false;
     }
 
@@ -479,7 +542,10 @@ impl App {
         self.update(dt);
         self.build_hud();
 
-        let size = self.window.inner_size();
+        let size = self.window.as_ref().map(|w| w.inner_size()).unwrap_or(winit::dpi::PhysicalSize::new(
+            self.headless_size.0.max(1),
+            self.headless_size.1.max(1),
+        ));
         let aspect = (size.width.max(1) as f32, size.height.max(1) as f32);
         let (straw_dyn, prop_insts, batches) = self.collect_instances();
         let hud_snapshot = Hud {
@@ -1012,9 +1078,7 @@ impl App {
 
     fn build_hud(&mut self) {
         let mut hud = Hud::new();
-        let size = self.window.inner_size();
-        let w = size.width as f32;
-        let h = size.height as f32;
+        let (w, h) = self.win_size();
         let g = &self.game;
 
         match g.state {

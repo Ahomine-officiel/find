@@ -25,7 +25,13 @@ struct HOut {
 
 @vertex
 fn vs(in: HIn, @builtin(vertex_index) vi: u32) -> HOut {
-    let local = vec2<f32>(f32(vi & 1u), f32(vi >> 1u));
+    // 6 verts, two triangles covering the quad exactly:
+    // (0,0),(1,0),(0,1) + (1,0),(1,1),(0,1)
+    var corners = array<vec2<u32>, 6>(
+        vec2<u32>(0u, 0u), vec2<u32>(1u, 0u), vec2<u32>(0u, 1u),
+        vec2<u32>(1u, 0u), vec2<u32>(1u, 1u), vec2<u32>(0u, 1u),
+    );
+    let local = vec2<f32>(corners[vi]);
     let px = in.a.xy + in.a.zw * local;
     let ndc = vec2<f32>(
         px.x / hp.params.x * 2.0 - 1.0,

@@ -920,6 +920,7 @@ impl Pipelines {
         straw_dyn: &[StrawInst],
         prop_insts: &[PropInst],
         prop_batches: &[(usize, u32, u32)],
+        out_bmp: Option<&str>,
     ) {
         let (w, h) = match self.scene.as_ref() {
             Some(s) => (s.width, s.height),
@@ -964,17 +965,46 @@ impl Pipelines {
         self.queue.submit([enc.finish()]);
         readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
         self.device.poll(wgpu::Maintain::Wait);
+        if let Some(path) = out_bmp {
+            let view = readback.slice(..).get_mapped_range();
+            write_bmp(path, &view, w, h, bytes_per_row);
+        }
         readback.unmap();
     }
 
     pub fn pile_dims() -> (f32, f32) {
         (PILE_R, PILE_H)
     }
-
     /// Swap the static straw instance buffer (quality change / new seed).
     pub fn replace_straw_static(&mut self, world: &World) {
         self.straw_static = self.device.create_buffer_init_bfn(&world.straws);
         self.straw_static_count = world.straws.len() as u32;
+    }
+}
+
+/// Minimal 32bpp BI_RGB BMP writer (BGRA rows, bottom-up). Std only.
+fn write_bmp(path: &str, bgra: &[u8], w: u32, h: u32, stride: u32) {
+    use std::io::Write;
+    let mut f = std::io::BufWriter::new(std::fs::File::create(path).expect("bmp create"));
+    let pixel_bytes = stride.checked_mul(h).expect("bmp size") as u32;
+    f.write_all(b"BM").unwrap();
+    f.write_all(&(54 + pixel_bytes).to_le_bytes()).unwrap();
+    f.write_all(&0u32.to_le_bytes()).unwrap();
+    f.write_all(&54u32.to_le_bytes()).unwrap();
+    f.write_all(&40u32.to_le_bytes()).unwrap(); // BITMAPINFOHEADER size
+    f.write_all(&(w as i32).to_le_bytes()).unwrap();
+    f.write_all(&(h as i32).to_le_bytes()).unwrap();
+    f.write_all(&1u16.to_le_bytes()).unwrap(); // planes
+    f.write_all(&32u16.to_le_bytes()).unwrap(); // bpp
+    f.write_all(&0u32.to_le_bytes()).unwrap(); // BI_RGB
+    f.write_all(&pixel_bytes.to_le_bytes()).unwrap();
+    f.write_all(&2835u32.to_le_bytes()).unwrap(); // ppm
+    f.write_all(&2835u32.to_le_bytes()).unwrap();
+    f.write_all(&0u32.to_le_bytes()).unwrap();
+    f.write_all(&0u32.to_le_bytes()).unwrap();
+    for row in (0..h as usize).rev() {
+        let off = row * stride as usize;
+        f.write_all(&bgra[off..off + stride as usize]).unwrap();
     }
 }
 
