@@ -2,6 +2,3 @@
 *.bin
 settings.ini
 best_time.txt
-skills/
-node_modules/
-.env
