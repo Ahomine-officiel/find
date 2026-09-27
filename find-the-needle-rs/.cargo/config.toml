@@ -1,7 +1,0 @@
-[target.x86_64-pc-windows-gnu]
-linker = "rust-lld"
-rustflags = [
-    "-C", "link-self-contained=yes",
-    "-L", "native=/home/z/my-project/.cross/root/usr/x86_64-w64-mingw32/lib",
-    "-L", "native=/home/z/my-project/.cross/root/usr/lib/gcc/x86_64-w64-mingw32/14-win32",
-]

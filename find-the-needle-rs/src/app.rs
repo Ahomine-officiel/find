@@ -106,7 +106,7 @@ impl App {
         let mut renderer = Renderer::new(
             device,
             queue,
-            surface,
+            Some(surface),
             &adapter,
             (size.width, size.height),
             &world,

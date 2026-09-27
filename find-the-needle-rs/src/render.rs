@@ -101,7 +101,7 @@ pub struct SceneTarget {
 }
 
 pub struct Renderer {
-    pub surface: wgpu::Surface<'static>,
+    pub surface: Option<wgpu::Surface<'static>>,
     pub config: wgpu::SurfaceConfiguration,
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -139,19 +139,22 @@ impl Renderer {
     pub fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
-        surface: wgpu::Surface<'static>,
+        surface: Option<wgpu::Surface<'static>>,
         adapter: &wgpu::Adapter,
         window_size: (u32, u32),
         world: &World,
         _settings: &Settings,
     ) -> Self {
-        let format = {
-            let caps = surface.get_capabilities(adapter);
-            caps.formats
-                .iter()
-                .copied()
-                .find(|f| !f.is_srgb())
-                .unwrap_or(caps.formats[0])
+        let format = match &surface {
+            Some(s) => {
+                let caps = s.get_capabilities(adapter);
+                caps.formats
+                    .iter()
+                    .copied()
+                    .find(|f| !f.is_srgb())
+                    .unwrap_or(caps.formats[0])
+            }
+            None => wgpu::TextureFormat::Bgra8Unorm, // headless selftest
         };
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -163,7 +166,9 @@ impl Renderer {
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
-        surface.configure(&device, &config);
+        if let Some(s) = &surface {
+            s.configure(&device, &config);
+        }
 
 impl Pipelines {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, format: wgpu::TextureFormat) -> Self {
@@ -200,7 +205,7 @@ impl Pipelines {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Globals>() as u64),
+                    min_binding_size: None,
                 },
                 count: None,
             }],
@@ -213,11 +218,12 @@ impl Pipelines {
                 resource: globals.as_entire_binding(),
             }],
         });
-        // One SHARED pipeline layout for every scene pipeline: the bind group and all
-        // pipelines must reference the exact same BindGroupLayout object, otherwise
-        // wgpu rejects the draw (auto-derived layouts never match manual ones).
-        let scene_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("scene_pl"),
+        // Explicit pipeline layout sharing `scene_bgl`: prop/straw/sky all use
+        // the same globals uniform, so bind groups created from `scene_bgl`
+        // stay compatible across pipeline switches (wgpu rejects auto-derived
+        // exclusive layouts when bind groups come from a different BGL).
+        let scene_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene_pipe_layout"),
             bind_group_layouts: &[&scene_bgl],
             push_constant_ranges: &[],
         });
@@ -262,7 +268,7 @@ impl Pipelines {
 
         let prop_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("prop"),
-            layout: Some(&scene_pl),
+            layout: Some(&scene_pipe_layout),
             vertex: wgpu::VertexState {
                 module: &main_mod,
                 entry_point: Some("vs_prop"),
@@ -294,7 +300,7 @@ impl Pipelines {
 
         let straw_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("straw"),
-            layout: Some(&scene_pl),
+            layout: Some(&scene_pipe_layout),
             vertex: wgpu::VertexState {
                 module: &main_mod,
                 entry_point: Some("vs_straw"),
@@ -333,7 +339,7 @@ impl Pipelines {
 
         let sky_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
-            layout: Some(&scene_pl),
+            layout: Some(&scene_pipe_layout),
             vertex: wgpu::VertexState {
                 module: &sky_mod,
                 entry_point: Some("vs"),
@@ -412,7 +418,7 @@ impl Pipelines {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<HudParams>() as u64),
+                        min_binding_size: None,
                     },
                     count: None,
                 },
@@ -434,11 +440,6 @@ impl Pipelines {
                 },
             ],
         });
-        let hud_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("hud_pl"),
-            bind_group_layouts: &[&hud_bgl],
-            push_constant_ranges: &[],
-        });
         let hud_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hud_bind"),
             layout: &hud_bgl,
@@ -449,9 +450,14 @@ impl Pipelines {
             ],
         });
 
+        let hud_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hud_pipe_layout"),
+            bind_group_layouts: &[&hud_bgl],
+            push_constant_ranges: &[],
+        });
         let hud_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("hud"),
-            layout: Some(&hud_pl),
+            layout: Some(&hud_pipe_layout),
             vertex: wgpu::VertexState {
                 module: &hud_mod,
                 entry_point: Some("vs"),
@@ -477,16 +483,50 @@ impl Pipelines {
                 compilation_options: Default::default(),
             }),
             primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
+            // Pass has a depth attachment: pipeline must declare it (HUD
+            // still draws on top via Always + no depth write).
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: wgpu::TextureFormat::Depth24Plus,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::Always,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: Default::default(),
             multiview: None,
             cache: None,
         });
 
-        // blit (bind group uses the pipeline's own layout via get_bind_group_layout)
+        // blit
+        let blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("blit_bgl"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let blit_pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("blit_pipe_layout"),
+            bind_group_layouts: &[&blit_bgl],
+            push_constant_ranges: &[],
+        });
         let blit_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blit"),
-            layout: None,
+            layout: Some(&blit_pipe_layout),
             vertex: wgpu::VertexState {
                 module: &blit_mod,
                 entry_point: Some("vs"),
@@ -621,7 +661,9 @@ impl Pipelines {
         let h = (h.max(1) as f32 * scale).round().max(1.0) as u32;
         self.config.width = w.max(1);
         self.config.height = h.max(1);
-        self.surface.configure(&self.device, &self.config);
+        if let Some(s) = &self.surface {
+            s.configure(&self.device, &self.config);
+        }
         let scene_w = w.max(1);
         let scene_h = h.max(1);
 
@@ -680,7 +722,9 @@ impl Pipelines {
         } else {
             wgpu::PresentMode::Immediate
         };
-        self.surface.configure(&self.device, &self.config);
+        if let Some(s) = &self.surface {
+            s.configure(&self.device, &self.config);
+        }
     }
 
     /// Full frame draw. `prop_batches`: (mesh_id, first_instance, count).
@@ -696,7 +740,36 @@ impl Pipelines {
         prop_batches: &[(usize, u32, u32)],
         hud: &Hud,
     ) {
-        let Some(scene) = self.scene.as_ref() else { return };
+        let Some(surface) = self.surface.as_ref() else { return };
+        let frame = match surface.get_current_texture() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let enc = self.encode_frame(
+            &frame_view, cam, aspect, time, cloud_amt, straw_dyn, prop_insts, prop_batches, hud,
+        );
+        self.queue.submit([enc.finish()]);
+        frame.present();
+    }
+
+    /// Encode a full frame into any target view (surface texture or offscreen).
+    #[allow(clippy::too_many_arguments)]
+    fn encode_frame(
+        &mut self,
+        frame_view: &wgpu::TextureView,
+        cam: &Camera,
+        aspect: (f32, f32),
+        time: f32,
+        cloud_amt: f32,
+        straw_dyn: &[StrawInst],
+        prop_insts: &[PropInst],
+        prop_batches: &[(usize, u32, u32)],
+        hud: &Hud,
+    ) -> wgpu::CommandEncoder {
+        let Some(scene) = self.scene.as_ref() else {
+            return self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        };
 
         // --- update globals ---
         let vp = cam.view_proj(aspect.0 / aspect.1, cam.near(), 900.0);
@@ -735,11 +808,6 @@ impl Pipelines {
             self.queue.write_buffer(&self.hud_quads, 0, bytemuck::cast_slice(&hud.quads[..n]));
         }
 
-        let frame = match self.surface.get_current_texture() {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let frame_view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
 
         {
@@ -837,8 +905,66 @@ impl Pipelines {
             bpass.draw(0..3, 0..1);
         }
 
+        enc
+    }
+
+    /// Headless regression test: encodes + submits one full frame into an
+    /// offscreen target, then waits for GPU completion. Exercises every
+    /// pipeline + bind-group combination; any validation error panics via
+    /// wgpu's default uncaptured-error handler.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run_selftest(
+        &mut self,
+        cam: &Camera,
+        hud: &Hud,
+        straw_dyn: &[StrawInst],
+        prop_insts: &[PropInst],
+        prop_batches: &[(usize, u32, u32)],
+    ) {
+        let (w, h) = match self.scene.as_ref() {
+            Some(s) => (s.width, s.height),
+            None => (self.config.width, self.config.height),
+        };
+        let (w, h) = (w.max(1), h.max(1));
+        let tex = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("selftest_target"),
+            size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: self.config.format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut enc = self.encode_frame(
+            &view, cam, (w as f32, h as f32), 1.0, 0.4, straw_dyn, prop_insts, prop_batches, hud,
+        );
+
+        // Readback forces the queue to actually execute + lets us poll.
+        let bytes_per_row = ((w * 4) + 255) / 256 * 256;
+        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("selftest_readback"),
+            size: (bytes_per_row * h) as u64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        enc.copy_texture_to_buffer(
+            tex.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        );
         self.queue.submit([enc.finish()]);
-        frame.present();
+        readback.slice(..).map_async(wgpu::MapMode::Read, |_| {});
+        self.device.poll(wgpu::Maintain::Wait);
+        readback.unmap();
     }
 
     pub fn pile_dims() -> (f32, f32) {
@@ -863,7 +989,10 @@ impl CreateBufferInit for wgpu::Device {
         self.create_buffer(&wgpu::BufferDescriptor {
             label: None,
             size: bytes.len() as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            // used for both vertex and index buffers -> allow both usages
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::INDEX
+                | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: true,
         })
         .with_data(bytes)
