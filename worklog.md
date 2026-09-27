@@ -63,3 +63,22 @@ Stage Summary:
 - User path A (no credentials, recommended): paste same YAML via github.com web editor (Actions > New workflow), commit, click Run workflow, download artifact FindTheNeedle-win64.
 - User path B: local clone + git push with browser-based credential manager.
 - Both chat-pasted tokens remain compromised and must be revoked at github.com/settings/tokens.
+
+---
+Task ID: 5
+Agent: Super Z (main)
+Task: Fix the wgpu validation panic reported on the user's Windows machine (BindGroupLayout 'scene_bgl' of BindGroup 'scene_bind' not compatible with pipeline 'sky'), rebuild, repackage, push.
+
+Work Log:
+- Root cause: ALL five pipelines (sky/prop/straw/hud/blit) were created with layout:None -> wgpu 24 auto-derives BGLs that are EXCLUSIVE to their pipeline; bind groups built from manual BGLs (scene_bgl/hud_bgl) never match. Previous fix (4cfe8dd on remote) did not actually introduce explicit pipeline layouts (grep scene_pipe_layout on remote render.rs = 0).
+- Built a REAL GPU test rig in the no-GPU sandbox: Xvfb + Mesa EGL (libegl1/libegl-mesa0 .deb extraction), glvnd vendor dir via __EGL_VENDOR_LIBRARY_DIRS, libxkbcommon-x11 + libxcb-xkb for winit. Windowed surface still fails on llvmpipe, so:
+- Refactored Renderer: surface is Option<>, draw_frame split into encode_frame(+run_selftest); new CLI flag --selftest renders one full frame offscreen and waits for completion (exercises every pipeline + bind-group combo).
+- Selftest on llvmpipe (GL backend) exposed THREE bugs, all fixed: (1) explicit PipelineLayouts - scene_pipe_layout shared by prop/straw/sky, hud/blit get their own; (2) index buffers lacked INDEX usage in create_buffer_init_bfn; (3) hud pipeline lacked Depth24Plus depth-stencil declaration for the scene pass.
+- Final: SELFTEST OK on llvmpipe (LLVM 19.1.7, Mesa 25.0.7, backend Gl) - full frame validated + GPU-completed.
+- Cross-compiled windows-gnu (rust-lld + link-self-contained + mingw -L paths via RUSTFLAGS env only - no .cargo/config.toml needed), re-zipped download/FindTheNeedle-win64.zip (exe 4.8MB, zip 2.0MB, unzip -t OK).
+- Git: fetched remote main (cf04faf, user had reworked history + pushed partial fix 4cfe8dd). Created branch fix/selftest-gh = cf04faf + cherry-picked my 3 fixed files + REMOVED find-the-needle-rs/.cargo/config.toml (sandbox-specific -L paths break out-of-container builds). Commit ae6528a, push = fast-forward. Local main (8e8d7d8) keeps the same fix on the old base.
+
+Stage Summary:
+- Branch fix/selftest-gh (ae6528a) pushed to main once token with repo scope provided.
+- Release v2.0.0 asset (FindTheNeedle-win64.zip) replaced with the fixed build.
+- --selftest doubles as a regression gate: can be wired into CI (needs workflow scope) or run locally after every change.
