@@ -200,7 +200,7 @@ impl Pipelines {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: None,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Globals>() as u64),
                 },
                 count: None,
             }],
@@ -212,6 +212,14 @@ impl Pipelines {
                 binding: 0,
                 resource: globals.as_entire_binding(),
             }],
+        });
+        // One SHARED pipeline layout for every scene pipeline: the bind group and all
+        // pipelines must reference the exact same BindGroupLayout object, otherwise
+        // wgpu rejects the draw (auto-derived layouts never match manual ones).
+        let scene_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("scene_pl"),
+            bind_group_layouts: &[&scene_bgl],
+            push_constant_ranges: &[],
         });
 
         // ---------------- pipelines ----------------
@@ -254,7 +262,7 @@ impl Pipelines {
 
         let prop_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("prop"),
-            layout: None,
+            layout: Some(&scene_pl),
             vertex: wgpu::VertexState {
                 module: &main_mod,
                 entry_point: Some("vs_prop"),
@@ -286,7 +294,7 @@ impl Pipelines {
 
         let straw_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("straw"),
-            layout: None,
+            layout: Some(&scene_pl),
             vertex: wgpu::VertexState {
                 module: &main_mod,
                 entry_point: Some("vs_straw"),
@@ -325,7 +333,7 @@ impl Pipelines {
 
         let sky_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("sky"),
-            layout: None,
+            layout: Some(&scene_pl),
             vertex: wgpu::VertexState {
                 module: &sky_mod,
                 entry_point: Some("vs"),
@@ -404,7 +412,7 @@ impl Pipelines {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: None,
+                        min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<HudParams>() as u64),
                     },
                     count: None,
                 },
@@ -426,6 +434,11 @@ impl Pipelines {
                 },
             ],
         });
+        let hud_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("hud_pl"),
+            bind_group_layouts: &[&hud_bgl],
+            push_constant_ranges: &[],
+        });
         let hud_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("hud_bind"),
             layout: &hud_bgl,
@@ -438,7 +451,7 @@ impl Pipelines {
 
         let hud_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("hud"),
-            layout: None,
+            layout: Some(&hud_pl),
             vertex: wgpu::VertexState {
                 module: &hud_mod,
                 entry_point: Some("vs"),
@@ -470,28 +483,7 @@ impl Pipelines {
             cache: None,
         });
 
-        // blit
-        let blit_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("blit_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                        multisampled: false,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
-            ],
-        });
+        // blit (bind group uses the pipeline's own layout via get_bind_group_layout)
         let blit_pipe = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("blit"),
             layout: None,
@@ -517,7 +509,6 @@ impl Pipelines {
             multiview: None,
             cache: None,
         });
-        let _ = blit_bgl; // bind group created with scene target
         Pipelines {
             globals,
             scene_bind,

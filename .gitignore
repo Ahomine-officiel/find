@@ -1,7 +1,5 @@
-/target
-*.bin
-settings.ini
-best_time.txt
 skills/
 node_modules/
-.env
+.cross/
+download/FindTheNeedle.exe
+download/FindTheNeedle-win64.zip

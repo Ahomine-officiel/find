@@ -1,0 +1,12 @@
+/home/z/my-project/target/x86_64-pc-windows-gnu/release/deps/wgpu_types-6b0d2fc25fc9b9b4.d: /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/lib.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/assertions.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/counters.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/env.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/instance.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/math.rs
+
+/home/z/my-project/target/x86_64-pc-windows-gnu/release/deps/libwgpu_types-6b0d2fc25fc9b9b4.rlib: /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/lib.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/assertions.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/counters.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/env.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/instance.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/math.rs
+
+/home/z/my-project/target/x86_64-pc-windows-gnu/release/deps/libwgpu_types-6b0d2fc25fc9b9b4.rmeta: /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/lib.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/assertions.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/counters.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/env.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/instance.rs /home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/math.rs
+
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/lib.rs:
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/assertions.rs:
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/counters.rs:
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/env.rs:
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/instance.rs:
+/home/z/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/wgpu-types-24.0.0/src/math.rs:
