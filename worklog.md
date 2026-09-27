@@ -82,3 +82,21 @@ Stage Summary:
 - Branch fix/selftest-gh (ae6528a) pushed to main once token with repo scope provided.
 - Release v2.0.0 asset (FindTheNeedle-win64.zip) replaced with the fixed build.
 - --selftest doubles as a regression gate: can be wired into CI (needs workflow scope) or run locally after every change.
+
+---
+Task ID: 6
+Agent: Super Z (main)
+Task: "l'ui a l'air casse" - user screenshot (upload failed, diagnosed via self-hosted captures instead).
+
+Work Log:
+- Built headless UI capture: App window -> Option<Arc<Window>>, App::new_headless, --shot <menu|game|shop|research|paused> renders one real frame offscreen and dumps a 32bpp BMP (write_bmp, std-only) to download/shot_*.bmp.
+- Reproduced the user's broken UI pixel-exact on llvmpipe: garbled glyph text + a diagonal dark triangle on fullscreen-rect screens (menu/shop).
+- Root cause (one line, hud.wgsl vs): quad expander used local=(vi&1, vi>>1); for a 6-vert triangle list that gives (0,0),(1,0),(0,1),(1,1),(0,2),(1,2) - second triangle escaped the quad with 2x-scaled UVs -> sampled neighbouring atlas cells (garbled text) and half of every solid quad missing (the diagonal triangle).
+- Fix: explicit corner table (0,0),(1,0),(0,1)+(1,0),(1,1),(0,1). Verified via --shot: menu/game/shop all render clean.
+- Intermediate wrong fixes documented for posterity: (vi>>1)&1 -> degenerate T2 (missing bottom triangle); min(vi>>1,1) -> (1,1) at v3 + degenerate again. The corner table is the only correct form for this vertex order.
+- Cross-compiled windows-gnu, rezipped, pushed cherry-picked f029676 to main (fast-forward), replaced release v2.0.0 asset (id 593142485, 1998421 bytes, URL verified).
+
+Stage Summary:
+- Remote main = f029676 (wgpu fix + UI fix + --selftest + --shot tools).
+- Release v2.0.0 asset now serves the fully fixed build.
+- Local main branch is dirty (tracked target/ artifacts, UUID commits) - do NOT push it; fix/selftest-gh is the source of truth.
