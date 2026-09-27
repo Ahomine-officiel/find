@@ -1560,8 +1560,159 @@ pub fn build_all_meshes() -> Vec<(Vec<Vertex>, Vec<u16>)> {
     out.push(wrapper_mesh());
     // 22: scout drone
     out.push(drone_mesh());
+    // 23: mechanical sorter (rotating drum on a frame + control screen)
+    out.push(sorter_mesh());
+    // 24: vertical elevator tower (tall belt with cleats, like shot 3)
+    out.push(elevator_mesh());
+    // 25: sale truck (tractor + flat trailer waiting at the gate)
+    out.push(truck_mesh());
+    // 26: the silo (big cylinder + dome + ladder)
+    out.push(silo_mesh());
+    // 27: eco brick press (hopper + press head + brick chute)
+    out.push(brick_press_mesh());
 
     out
+}
+
+/// Mechanical sorter: dark frame, horizontal drum with ribs, small control
+/// screen with a green LED. Sits at belt junctions.
+fn sorter_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let steel = Vec3::new(0.35, 0.38, 0.40);
+    let dark = Vec3::new(0.22, 0.24, 0.26);
+    // frame legs + deck
+    for (x, z) in [(-0.5, -0.35), (0.5, -0.35), (-0.5, 0.35), (0.5, 0.35)] {
+        mb.box_(
+            Vec3::new(x - 0.05, 0.0, z - 0.05),
+            Vec3::new(x + 0.05, 0.9, z + 0.05),
+            dark,
+        );
+    }
+    mb.box_(Vec3::new(-0.62, 0.9, -0.45), Vec3::new(0.62, 1.02, 0.45), steel);
+    // ribbed drum (inline cylinder laid horizontally via stacked boxes)
+    let drum_col = Vec3::new(0.55, 0.48, 0.34);
+    for i in 0..7 {
+        let t = i as f32 / 6.0;
+        let x = -0.42 + t * 0.84;
+        let rib = if i % 2 == 0 { 0.30 } else { 0.26 };
+        mb.box_(
+            Vec3::new(x - 0.05, 1.02 - rib * 0.5, -rib),
+            Vec3::new(x + 0.05, 1.02 + rib * 0.5, rib),
+            drum_col,
+        );
+    }
+    // feed hopper on the back
+    mb.box_(Vec3::new(-0.55, 1.02, -0.45), Vec3::new(0.10, 1.42, -0.05), steel);
+    // control screen + green LED
+    mb.box_(Vec3::new(0.30, 1.02, 0.45), Vec3::new(0.55, 1.34, 0.50), dark);
+    mb.box_(Vec3::new(0.44, 1.22, 0.505), Vec3::new(0.52, 1.30, 0.51), Vec3::new(0.1, 0.9, 0.3));
+    mb.build()
+}
+
+/// Vertical elevator tower: tall dark trunk with a light belt strip up the
+/// front (FLAG_BELT so the cleats animate), platform at the top. ~7 m tall.
+fn elevator_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let dark = Vec3::new(0.18, 0.19, 0.21);
+    let steel = Vec3::new(0.38, 0.40, 0.43);
+    // 4 legs splaying slightly
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+        mb.box_(
+            Vec3::new(sx * 0.34 - 0.06, 0.0, sz * 0.34 - 0.06),
+            Vec3::new(sx * 0.22 + 0.06, 6.6, sz * 0.22 + 0.06),
+            dark,
+        );
+    }
+    // trunk
+    mb.box_(Vec3::new(-0.42, 0.4, -0.42), Vec3::new(0.42, 6.6, 0.42), dark);
+    // belt strip up the front face (animated cleats)
+    mb.boxf(
+        Vec3::new(-0.30, 0.5, 0.425),
+        Vec3::new(0.30, 6.5, 0.44),
+        Vec3::new(0.25, 0.25, 0.27),
+        FLAG_BELT,
+    );
+    // cross braces
+    for y in [1.6f32, 3.4, 5.2] {
+        mb.box_(Vec3::new(-0.48, y, -0.48), Vec3::new(0.48, y + 0.06, 0.48), steel);
+    }
+    // top platform + chute
+    mb.box_(Vec3::new(-0.55, 6.6, -0.55), Vec3::new(0.55, 6.78, 0.55), steel);
+    mb.box_(Vec3::new(-0.10, 5.4, 0.44), Vec3::new(0.34, 5.6, 1.05), steel);
+    mb.build()
+}
+
+/// Sale truck parked by the gate: brown cab + flat trailer with side boards.
+fn truck_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let body = Vec3::new(0.42, 0.30, 0.18);
+    let dark = Vec3::new(0.20, 0.16, 0.12);
+    let tyre = Vec3::new(0.08, 0.08, 0.09);
+    // chassis
+    mb.box_(Vec3::new(-1.6, 0.45, -0.42), Vec3::new(1.6, 0.62, 0.42), dark);
+    // cab (front = +x)
+    mb.box_(Vec3::new(0.75, 0.62, -0.40), Vec3::new(1.55, 1.35, 0.40), body);
+    mb.box_(Vec3::new(1.30, 0.95, -0.33), Vec3::new(1.52, 1.22, 0.33), Vec3::new(0.55, 0.65, 0.70));
+    // flat trailer with boards
+    mb.box_(Vec3::new(-1.55, 0.62, -0.45), Vec3::new(0.70, 0.78, 0.45), body);
+    for z in [-0.45f32, 0.37] {
+        mb.box_(Vec3::new(-1.55, 0.78, z), Vec3::new(0.70, 1.10, z + 0.08), dark);
+    }
+    // wheels (box hubs - cheap and readable at gameplay distance)
+    for (x, z) in [(1.15f32, -0.45f32), (1.15, 0.45), (-0.9, -0.45), (-0.9, 0.45), (-1.3, -0.45), (-1.3, 0.45)] {
+        mb.box_(
+            Vec3::new(x - 0.20, 0.06, z - 0.10),
+            Vec3::new(x + 0.20, 0.46, z + 0.10),
+            tyre,
+        );
+    }
+    mb.build()
+}
+
+/// The Silo: big pale cylinder with a dome top, ladder rail, band rings.
+fn silo_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let wall = Vec3::new(0.72, 0.70, 0.64);
+    let band = Vec3::new(0.45, 0.42, 0.38);
+    mb.cylinder(1.5, 0.0, 5.2, 16, wall);
+    // band rings (slightly wider short cylinders)
+    for y in [0.9f32, 2.4, 3.9] {
+        mb.cylinder(1.54, y, y + 0.10, 16, band);
+    }
+    mb.dome(1.5, 0.8, 16, 5, band);
+    // legs
+    for k in 0..4 {
+        let a = k as f32 * std::f32::consts::FRAC_PI_2;
+        let (x, z) = (a.cos() * 1.1, a.sin() * 1.1);
+        mb.box_(Vec3::new(x - 0.08, 0.0, z - 0.08), Vec3::new(x + 0.08, 1.0, z + 0.08), band);
+    }
+    // ladder
+    mb.box_(Vec3::new(1.42, 0.0, -0.05), Vec3::new(1.48, 4.8, 0.05), band);
+    mb.box_(Vec3::new(1.42, 0.0, 0.30), Vec3::new(1.48, 4.8, 0.40), band);
+    for k in 0..8 {
+        let y = 0.5 + k as f32 * 0.55;
+        mb.box_(Vec3::new(1.42, y, -0.05), Vec3::new(1.48, y + 0.05, 0.40), band);
+    }
+    mb.build()
+}
+
+/// Eco brick press: hopper on top, press box, brick chute with green LED.
+fn brick_press_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let steel = Vec3::new(0.40, 0.36, 0.30);
+    let dark = Vec3::new(0.24, 0.22, 0.19);
+    // base + press box
+    mb.box_(Vec3::new(-0.55, 0.0, -0.40), Vec3::new(0.55, 0.75, 0.40), steel);
+    mb.box_(Vec3::new(-0.40, 0.75, -0.30), Vec3::new(0.40, 1.15, 0.30), dark);
+    // hopper (inverted pyramid faked with two boxes)
+    mb.box_(Vec3::new(-0.45, 1.15, -0.35), Vec3::new(0.45, 1.55, 0.35), steel);
+    // chute out the front
+    mb.box_(Vec3::new(0.40, 0.30, -0.16), Vec3::new(0.95, 0.48, 0.16), steel);
+    // bricks on the chute
+    mb.box_(Vec3::new(0.55, 0.48, -0.12), Vec3::new(0.78, 0.60, 0.12), Vec3::new(0.70, 0.52, 0.26));
+    // green LED
+    mb.box_(Vec3::new(-0.50, 0.80, 0.405), Vec3::new(-0.42, 0.88, 0.415), Vec3::new(0.1, 0.9, 0.3));
+    mb.build()
 }
 
 

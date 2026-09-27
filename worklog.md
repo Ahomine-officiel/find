@@ -100,3 +100,41 @@ Stage Summary:
 - Remote main = f029676 (wgpu fix + UI fix + --selftest + --shot tools).
 - Release v2.0.0 asset now serves the fully fixed build.
 - Local main branch is dirty (tracked target/ artifacts, UUID commits) - do NOT push it; fix/selftest-gh is the source of truth.
+
+---
+Task ID: 7
+Agent: main (Super Z)
+Task: "Verifie plus sur le web des infos" - verify GitHub push/release state on the web + gather new reference info about the original game.
+
+Work Log:
+- ls-remote + GitHub API: remote main advanced cf04faf -> bd6d8fa; the previous session had already pushed the full chain (ae6528a wgpu fix, 3e32f18 worklog 5, f029676 HUD quad corner-table fix, bd6d8fa worklog 6 + headless --shot UI captures). Fast-forward plan obsolete: nothing left to push.
+- Release v2.0.0 (id 397652871): asset FindTheNeedle-win64.zip (id 593142485, 1,998,421 B) re-uploaded at 14:58:08Z = AFTER the HUD fix commit (14:56:38Z). Downloaded the asset and byte-verified it: unzip OK, exe contains "corners = array<vec2<u32>, 6>" (HUD fix) and "scene_pipe_layout" (wgpu fix), old degenerate pattern "vi >> 1u" ABSENT. Online build = fully fixed build.
+- Local sandbox worktree was stale (pre-fix render.rs with layout:None, worklog only tasks 1-2). Stashed then git reset --hard bd6d8fa: local now == remote; worklog tasks 1,2,3,5,6 recovered.
+- Web research (Steam 5159870 page + Wikipedia + press): original = "Needle In A Haystack Simulator" by Studio Bitdot (Nas Nakarus), 5,000,000 strands + 1 needle, valuables -> sell -> tools escalation, co-op multiplayer ("More players. More tools. Same needle."), no-upgrade mode offered, went viral on X (~50M views), expected Q4 2026, Polygon called it "sort slop", min specs i5-8400/GTX 1060 6GB.
+- Fidelity gaps vs our remake identified: (1) strand count - original 5,000,000 vs our presets 250k/450k/800k (Low/Med/High); (2) co-op multiplayer absent (out of scope solo remake). Economy ($0.022/strand, tools/research tree), valuables, pile-digging already match.
+
+Stage Summary:
+- GitHub state verified healthy: main = bd6d8fa, Release v2.0.0 asset = verified fixed build (wgpu + HUD fixes byte-confirmed in shipped exe). User action: re-download zip and run; if it starts, done.
+- Local repo re-synced to bd6d8fa (stale buggy worktree stashed, not deleted).
+- New fidelity targets on record for a future task: Ultra 5,000,000-strand preset (instancing budget ~5M x instance stride, chunked/indirect draws, dig-removal cost analysis) and optional no-tools "true experience" mode toggle.
+
+---
+Task ID: 8
+Agent: main (Super Z)
+Task: "T'as mis les bras robot? Et les tapis et les presse a foin et le generateur a foin? Je pense que t'as oublier bcp de truc de l'arbre de competence" - verify machines exist, close the tech-tree gap vs the real game.
+
+Work Log:
+- Verified the 4 machines the user asked about already exist (14 robot arms, perimeter belt ring + spurs, 3 balers, steam generator + 10 poles) via code inspection + screenshots.
+- Measured the real gap from reference shot ftn_6: the real YARD RESEARCH shows "17 of 391 levels bought" with leveled cards (Bigger Boiler 0/6, Longer Spans 0/5...). Ours had 34 flat cards.
+- Web research (findtheneedledemo.site): 300+ upgrades, 6M strands, products = pulp/bales/bricks/paper/pellets, machines = sorters/balers/wrappers/vacuums/scanners/drones/robot arms.
+- game.rs: leveled research system (ResearchDef.levels, research_lv: Vec<u8>, lv()/has(), research_count counts LEVELS like the real UI, price_for_level x1.55/level). Tree expanded 34 -> 81 cards / 303 levels across 10 categories (added HAND WORK). Existing card indices 0..33 frozen (renderer refs them by index); new cards 34..80 appended. All effect fns (auto_rate/strand_price_mul/capacity/walk_speed/detector/pick/cooldown) now scale per level. Save v3 (FND3, lv byte array) with v2 bitset migration.
+- mesh.rs: 5 new prop meshes - 23 mechanical sorter, 24 vertical elevator tower (FLAG_BELT animated cleats), 25 sale truck, 26 silo, 27 eco brick press.
+- app.rs: placements (sorter S junction, elevator E of pile, truck SW gate, silo far east, brick press by baler row) with pulse flags on their research ids; Extra Arm Batch +4 arms/lvl interleaved on ring; Drone Fleet +2 drones/lvl; YARD RESEARCH UI shows n/m pips, MAXED state, next-level price; header "X OF 303 LEVELS BOUGHT".
+- Bug caught by test: Vacuum Line auto-rate multiplier had become unconditional -> fixed to has(20).
+- Env rebuilt after sandbox reset: rustup 1.98.1, Xvfb+Mesa EGL stack (~/.x11libs), mingw cross root (.cross/debs/root, gcc 14-posix + binutils on PATH).
+- Validated: cargo test --release 6/6 (303 levels asserted, leveled pricing 8000->12400, v2 save migration), llvmpipe selftest SELFTEST OK, Windows PE32+ cross-build OK.
+- Fixed accidental sandbox artifacts in commit (reset --soft to FETCH_HEAD, re-committed only project files).
+
+Stage Summary:
+- Commit on top of remote main (fast-forward): research tree v3 (81 cards/303 levels), 5 machines, save v3.
+- Windows zip rebuilt with the expansion: download/FindTheNeedle-win64.zip (2.0 MB).

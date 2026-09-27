@@ -1,7 +1,7 @@
 // Build-time validation: every WGSL shader must parse + validate through naga.
 // Catches GPU compile errors without needing a window.
 
-use find_the_needle::game::{format_money, Game};
+use find_the_needle::game::{format_money, Game, RESEARCH, RESEARCH_LEN, total_levels};
 use find_the_needle::world::World;
 use glam::Vec3;
 
@@ -64,7 +64,9 @@ fn save_roundtrip() {
     let mut game = Game::new(7, false);
     game.money = 12_345;
     game.carried = 321;
-    game.research = 0b1010;
+    game.research_lv = vec![0u8; RESEARCH_LEN];
+    game.research_lv[1] = 1;
+    game.research_lv[3] = 2;
     game.owned[3] = true;
 
     let path = std::env::temp_dir().join("ftn_test_save.bin");
@@ -76,12 +78,91 @@ fn save_roundtrip() {
     std::fs::remove_file(path).ok();
     assert_eq!(g2.money, 12_345);
     assert_eq!(g2.carried, 321);
-    assert_eq!(g2.research, 0b1010);
+    assert_eq!(g2.lv(1), 1);
+    assert_eq!(g2.lv(3), 2);
+    assert!(g2.has(3));
+    assert!(!g2.has(2));
     assert!(g2.owned[3]);
     assert_eq!(count, 10_000);
     let mut w2 = World::new(7, 10_000);
     assert!(w2.restore_removed(&bitset, removed), "bitset must restore");
     assert_eq!(w2.removed_count, 0, "fresh dig state round-trips empty");
+}
+
+#[test]
+fn leveled_research_buys_and_scales() {
+    let mut game = Game::new(1, false);
+    game.money = 1_000_000_000;
+    // card 11 "Bigger Boiler" has 6 levels, price 8000 cents, x1.55 per level;
+    // it requires card 9 "Electricity" first
+    let def = &RESEARCH[11];
+    assert_eq!(def.levels, 6);
+    game.buy_research(9); // Electricity (no prerequisite)
+    assert!(game.has(9));
+    game.buy_research(11);
+    assert_eq!(game.lv(11), 1);
+    let p1 = game.money;
+    game.buy_research(11);
+    assert_eq!(game.lv(11), 2);
+    let spent2 = 1_000_000_000 - game.money - (1_000_000_000 - p1);
+    // level 2 costs 8000 * 1.55 = 12400
+    assert_eq!(spent2, 12_400, "level 2 must cost base * 1.55");
+    // max it out: further buys are no-ops
+    for _ in 0..10 {
+        game.buy_research(11);
+    }
+    assert_eq!(game.lv(11), 6);
+    // auto rate must scale with the level
+    game.owned[7] = true;
+    game.research_lv[11] = 1;
+    let r1 = game.auto_rate();
+    game.research_lv[11] = 6;
+    let r6 = game.auto_rate();
+    assert!(r6 > r1 * 1.4, "boiler levels must scale auto rate ({} -> {})", r1, r6);
+}
+
+#[test]
+fn research_tree_matches_real_game_scale() {
+    // the real tree advertises "391 levels" - ours must stay in the same
+    // ballpark (300+), across 10 categories with leveled cards
+    assert!(RESEARCH.len() >= 70, "tree must have ~70+ cards, got {}", RESEARCH.len());
+    let lv = total_levels();
+    assert!(lv >= 300, "tree must offer 300+ levels, got {}", lv);
+    // every card: at least 1 level, prerequisites in range
+    for (i, d) in RESEARCH.iter().enumerate() {
+        assert!(d.levels >= 1, "card {} has no levels", i);
+        if d.requires != find_the_needle::game::NO_REQ {
+            assert!((d.requires as usize) < RESEARCH.len(), "card {} bad req", i);
+        }
+    }
+    // hand work category exists (the real tree's 10th category)
+    assert!(RESEARCH.iter().any(|d| matches!(d.cat, find_the_needle::game::RCategory::HandWork)));
+    // v2 save compat: old bitset byte layout still loads
+    let world = World::new(3, 10_000);
+    let mut old = Vec::new();
+    old.extend_from_slice(b"FND2");
+    old.extend_from_slice(&2u32.to_le_bytes());
+    old.extend_from_slice(&3u64.to_le_bytes());
+    old.extend_from_slice(&(world.straw_count as u64).to_le_bytes());
+    old.extend_from_slice(&5_000u64.to_le_bytes());
+    old.extend_from_slice(&0u64.to_le_bytes());
+    old.extend_from_slice(&600u64.to_le_bytes());
+    old.extend_from_slice(&0u64.to_le_bytes());
+    let research_bitset: u64 = (1 << 5) | (1 << 11);
+    old.extend_from_slice(&research_bitset.to_le_bytes());
+    old.extend_from_slice(&[0u8; 9]);
+    old.extend_from_slice(&0u32.to_le_bytes());
+    old.push(0u8);
+    old.extend_from_slice(&0f64.to_le_bytes());
+    old.extend_from_slice(&0u32.to_le_bytes());
+    let words = ((world.straw_count as usize) + 63) / 64;
+    old.extend_from_slice(&vec![0u8; words * 8]);
+    old.extend_from_slice(&0f64.to_le_bytes());
+    let path = std::env::temp_dir().join("ftn_test_v2.bin");
+    std::fs::write(&path, &old).unwrap();
+    let (g2, _, _, _) = find_the_needle::game::load_game(path.to_str().unwrap()).expect("v2 must load");
+    std::fs::remove_file(path).ok();
+    assert!(g2.has(5) && g2.has(11) && !g2.has(4), "v2 bitset maps to levels");
 }
 
 #[test]

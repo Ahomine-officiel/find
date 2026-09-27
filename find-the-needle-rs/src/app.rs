@@ -2,7 +2,9 @@
 // HUD building (in-game + menu + shop + YARD RESEARCH + win screen).
 
 use crate::cam::Camera;
-use crate::game::{format_money, format_time, Game, GameState, RESEARCH, TOOLS};
+use crate::game::{
+    format_money, format_time, price_for_level, total_levels, Game, GameState, RESEARCH, TOOLS,
+};
 use crate::hud::{Hud, HudQuad};
 use crate::mesh::ValuableKind;
 use crate::render::{PropInst, Renderer};
@@ -932,6 +934,7 @@ impl App {
             prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
             push_batch(&prop_insts, &mut batches, 21, 1);
             // robot arm fleet ringing the pile along the belt network
+            // (Extra Arm Batch adds 4 arms per level between the base ones)
             const ARMS: [(f32, f32); 14] = [
                 (5.0, 19.5), (35.0, 17.2), (55.0, 19.0), (125.0, 19.6), (135.0, 17.5),
                 (155.0, 18.2), (175.0, 18.0), (195.0, 18.0), (215.0, 17.6), (235.0, 17.0),
@@ -939,7 +942,19 @@ impl App {
             ];
             let f = if self.game.has(19) { ON } else { OFF };
             let first = prop_insts.len();
-            for (deg, r) in ARMS {
+            let extra = if self.game.has(19) { 4 * self.game.lv(60) } else { 0 };
+            let total_arms = ARMS.len() + extra as usize;
+            for k in 0..total_arms {
+                let (deg, r) = if k < ARMS.len() {
+                    ARMS[k]
+                } else {
+                    // extra arms interleave on the ring
+                    let j = k - ARMS.len();
+                    let a0 = ARMS[j % ARMS.len()].0;
+                    let a1 = ARMS[(j + 1) % ARMS.len()].0;
+                    let mid = if a1 > a0 { (a0 + a1) * 0.5 } else { (a0 + a1 + 360.0) * 0.5 };
+                    (mid % 360.0, 18.2)
+                };
                 let a = deg.to_radians();
                 let p = Vec3::new(a.cos() * r, 0.0, a.sin() * r);
                 let m = Mat4::from_translation(p)
@@ -953,18 +968,50 @@ impl App {
             let f = if self.game.has(17) { ON } else { OFF };
             prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
             push_batch(&prop_insts, &mut batches, 18, 1);
-            // scout drone circling the pile
-            if self.game.has(21) {
-                let t = self.time as f32;
+            // scout drone(s) circling the pile (Drone Fleet adds 2 per level)
+            let drone_count = if self.game.has(21) { 1 + 2 * self.game.lv(62) } else { 0 };
+            for di in 0..drone_count {
+                let t = self.time as f32 + di as f32 * 2.1;
                 let p = Vec3::new(
-                    (t * 0.25).cos() * 7.0,
+                    (t * 0.25).cos() * (7.0 + di as f32 * 0.9),
                     7.6 + (t * 1.1).sin() * 0.5,
-                    (t * 0.25).sin() * 7.0,
+                    (t * 0.25).sin() * (7.0 + di as f32 * 0.9),
                 );
                 let m = Mat4::from_translation(p) * Mat4::from_rotation_y(t * 1.7);
                 prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
-                push_batch(&prop_insts, &mut batches, 22, 1);
             }
+            if drone_count > 0 {
+                push_batch(&prop_insts, &mut batches, 22, drone_count as usize);
+            }
+            // ---- v3 machines (mirroring the real late-game yard, shot 3) ----
+            // mechanical sorter at the south belt junction
+            let m = Mat4::from_translation(Vec3::new(6.5, 0.0, 15.0))
+                * Mat4::from_rotation_y(-0.5);
+            let f = if self.game.has(47) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            push_batch(&prop_insts, &mut batches, 23, 1);
+            // vertical elevator tower east of the pile (black tower in shot 3)
+            let m = Mat4::from_translation(Vec3::new(13.5, 0.0, 8.0))
+                * Mat4::from_rotation_y(2.35);
+            let f = if self.game.has(8) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            push_batch(&prop_insts, &mut batches, 24, 1);
+            // sale truck parked at the SW gate corner
+            let m = Mat4::from_translation(Vec3::new(-16.5, 0.0, -12.0))
+                * Mat4::from_rotation_y(0.75);
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
+            push_batch(&prop_insts, &mut batches, 25, 1);
+            // the silo on the far east pad
+            let m = Mat4::from_translation(Vec3::new(19.5, 0.0, 12.5));
+            let f = if self.game.has(57) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            push_batch(&prop_insts, &mut batches, 26, 1);
+            // eco brick press next to the baler row
+            let m = Mat4::from_translation(Vec3::new(15.8, 0.0, -6.5))
+                * Mat4::from_rotation_y(-1.2);
+            let f = if self.game.has(54) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            push_batch(&prop_insts, &mut batches, 27, 1);
         }
         // belt balls
         if self.game.has(0) || self.game.auto_rate() > 0.0 {
@@ -1362,19 +1409,30 @@ impl App {
                 continue;
             }
             let sel = ci == sel_idx;
-            let owned = g.has(ri as u32);
+            let cur = g.lv(ri as u32);
+            let maxed = cur >= d.levels;
             hud.rect(x, y, col_w - 14.0, 82.0, [0.10, 0.085, 0.06, 0.96]);
             hud.rect(x, y, col_w - 14.0, 16.0, [0.85, 0.68, 0.22, 0.35]);
             hud.text(x + 6.0, y + 2.0, 1.2, Self::GOLD, cat.name());
             hud.text(x + 6.0, y + 22.0, 1.6, Self::WHITE, d.name);
             let locked = d.requires != u32::MAX && !g.has(d.requires);
-            if owned {
-                hud.text(x + 6.0, y + 44.0, 1.6, Self::GOLD, "OWNED");
+            // level pips like the real tree ("0/6")
+            let lv_label = format!("{}/{}", cur, d.levels);
+            hud.text(
+                x + col_w - 40.0,
+                y + 2.0,
+                1.4,
+                if maxed { Self::GOLD } else { Self::DIM },
+                &lv_label,
+            );
+            if maxed {
+                hud.text(x + 6.0, y + 44.0, 1.6, Self::GOLD, "MAXED");
                 hud.text(x + 6.0, y + 60.0, 1.4, Self::DIM, "DONE");
             } else if locked {
                 hud.text(x + 6.0, y + 44.0, 1.5, [0.7, 0.3, 0.25, 1.0], "LOCKED");
             } else {
-                hud.text(x + 6.0, y + 44.0, 1.6, Self::GREEN, &format_money(d.price));
+                let price = price_for_level(d, cur);
+                hud.text(x + 6.0, y + 44.0, 1.6, Self::GREEN, &format_money(price));
                 hud.rect(x + 6.0, y + 60.0, 40.0, 14.0, [0.9, 0.75, 0.3, 0.25]);
                 hud.text(x + 10.0, y + 62.0, 1.3, Self::GOLD, "SHOW");
             }
@@ -1394,7 +1452,7 @@ impl App {
             &format!(
                 "{} OF {} LEVELS BOUGHT - ARROWS TO MOVE - ENTER TO BUY - TAB TO CLOSE",
                 g.research_count(),
-                RESEARCH.len()
+                total_levels()
             ),
         );
     }

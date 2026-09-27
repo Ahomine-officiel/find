@@ -69,10 +69,11 @@ pub enum RCategory {
     Automation,
     Prospecting,
     Water,
+    HandWork,
 }
 
 impl RCategory {
-    pub const ALL: [RCategory; 9] = [
+    pub const ALL: [RCategory; 10] = [
         RCategory::YardBuilding,
         RCategory::HayLines,
         RCategory::Power,
@@ -82,6 +83,7 @@ impl RCategory {
         RCategory::Fitness,
         RCategory::Prospecting,
         RCategory::Water,
+        RCategory::HandWork,
     ];
     pub fn name(&self) -> &'static str {
         match self {
@@ -94,6 +96,7 @@ impl RCategory {
             RCategory::Fitness => "FITNESS",
             RCategory::Prospecting => "PROSPECTING",
             RCategory::Water => "WATER",
+            RCategory::HandWork => "HAND WORK",
         }
     }
     pub fn hint(&self) -> &'static str {
@@ -107,6 +110,7 @@ impl RCategory {
             RCategory::Fitness => "walk faster, dig stronger",
             RCategory::Prospecting => "detectors and luck",
             RCategory::Water => "sprinklers and the trough",
+            RCategory::HandWork => "picks, dig speed and buckets",
         }
     }
 }
@@ -141,6 +145,19 @@ pub enum REffect {
     LuckyCharm,       // more valuables
     Sprinkler,        // visual
     WaterTrough,      // flavor
+    // ---- expansion cards (effects are applied by RESEARCH INDEX, these are
+    // documentation of what each card does) ----
+    HandsPick, DigSpeed, BucketRigs, SprintTraining, WarmHands, CompoundLevers,
+    YardLighting, SecondShed, ToolRacks, SecondYard,
+    LongerBelts, BeltLube, WideBelts, SecondSpur, TrafficControl, SortingAlgorithm,
+    Crossroads, PneumaticTubes,
+    GenEfficiency, SteamTurbine, LongerSpans, LongerDrops, BackupGenerator,
+    GridRedundancy,
+    PulpLine, BrickPress, PaperMill, Pelletizer, TheSilo, BaleStacker,
+    HydraulicPress, BaleExit,
+    ArmServo, ExtraArms, ScannerOverclock, DroneFleet, ArmJoints,
+    OnlineMarket, LoyalCustomers, PremiumBrand, GlobalShipping, SortLicense,
+    DeepScan, TreasureMaps, IrrigationLoop, DustControl, BaleMarathon,
 }
 
 #[derive(Clone, Copy)]
@@ -148,27 +165,48 @@ pub struct ResearchDef {
     pub cat: RCategory,
     pub tier: u32,     // column: 0 = START, 1 = 1 STEP...
     pub name: &'static str,
-    pub price: i64,    // cents
+    pub price: i64,    // cents (price of level 1; higher levels scale by LEVEL_COST_MUL)
     pub requires: u32, // index into RESEARCH of the prerequisite (u32::MAX = none)
+    pub levels: u32,   // how many times this card can be bought (like the real "0/6" cards)
     pub effect: REffect,
 }
 
 macro_rules! rd {
     ($cat:expr, $tier:expr, $name:expr, $price:expr, $req:expr, $eff:expr) => {
-        ResearchDef { cat: $cat, tier: $tier, name: $name, price: $price, requires: $req, effect: $eff }
+        ResearchDef { cat: $cat, tier: $tier, name: $name, price: $price, requires: $req, levels: 1, effect: $eff }
     };
+    ($cat:expr, $tier:expr, $name:expr, $price:expr, $req:expr, lv $lv:expr, $eff:expr) => {
+        ResearchDef { cat: $cat, tier: $tier, name: $name, price: $price, requires: $req, levels: $lv, effect: $eff }
+    };
+}
+
+/// Cost of level n+1 = base price * LEVEL_COST_MUL^n ("generator prices scale
+/// exponentially" like the real tree).
+pub const LEVEL_COST_MUL: f32 = 1.55;
+
+pub fn price_for_level(def: &ResearchDef, current_level: u32) -> i64 {
+    let m = LEVEL_COST_MUL.powi(current_level as i32);
+    ((def.price as f32 * m) as i64).max(1)
+}
+
+pub fn total_levels() -> u32 {
+    RESEARCH.iter().map(|d| d.levels).sum()
 }
 
 pub const NO_REQ: u32 = u32::MAX;
 
-pub const RESEARCH: [ResearchDef; 34] = [
+pub const RESEARCH_LEN: usize = RESEARCH.len();
+
+pub const RESEARCH: &[ResearchDef] = &[
+    // ---- indices 0..33 : the original slice (order MUST NOT change - the
+    // renderer and tests reference cards by index) ----
     // YARD BUILDING
     rd!(RCategory::YardBuilding, 0, "Conveyor Plans", 15000, NO_REQ, REffect::ConveyorPlans),
-    rd!(RCategory::YardBuilding, 1, "Extend the Shed", 15000, 0, REffect::ExtendTheShed),
-    rd!(RCategory::YardBuilding, 1, "Waste Less Material", 10000, 0, REffect::WasteLessMaterial),
-    rd!(RCategory::YardBuilding, 2, "Yard Platforms", 20000, 2, REffect::WaterTrough),
+    rd!(RCategory::YardBuilding, 1, "Extend the Shed", 15000, 0, lv 4, REffect::ExtendTheShed),
+    rd!(RCategory::YardBuilding, 1, "Waste Less Material", 10000, 0, lv 3, REffect::WasteLessMaterial),
+    rd!(RCategory::YardBuilding, 2, "Yard Platforms", 20000, 2, lv 2, REffect::WaterTrough),
     // HAY LINES
-    rd!(RCategory::HayLines, 1, "Faster Belt Motor", 1500, 0, REffect::FasterBelt),
+    rd!(RCategory::HayLines, 1, "Faster Belt Motor", 1500, 0, lv 2, REffect::FasterBelt),
     rd!(RCategory::HayLines, 1, "Alternating Splitter", 5000, 0, REffect::AlternatingSplitter),
     rd!(RCategory::HayLines, 2, "Belt Joiner", 8000, 5, REffect::BeltJoiner),
     rd!(RCategory::HayLines, 2, "Priority Arm", 12000, 5, REffect::PriorityArm),
@@ -176,14 +214,14 @@ pub const RESEARCH: [ResearchDef; 34] = [
     // POWER
     rd!(RCategory::Power, 0, "Electricity", 9000, NO_REQ, REffect::Electricity),
     rd!(RCategory::Power, 1, "Power Pole", 4000, 9, REffect::PowerPole),
-    rd!(RCategory::Power, 1, "Bigger Boiler", 8000, 9, REffect::BiggerBoiler),
-    rd!(RCategory::Power, 1, "Bigger Firebox", 4000, 9, REffect::BiggerFirebox),
+    rd!(RCategory::Power, 1, "Bigger Boiler", 8000, 9, lv 6, REffect::BiggerBoiler),
+    rd!(RCategory::Power, 1, "Bigger Firebox", 4000, 9, lv 3, REffect::BiggerFirebox),
     rd!(RCategory::Power, 2, "Underground Cable", 300000, 10, REffect::UndergroundCable),
     // PROCESSING
     rd!(RCategory::Processing, 0, "Baler Machine", 60000, NO_REQ, REffect::BalerMachine),
-    rd!(RCategory::Processing, 1, "Larger Bale Chamber", 8000, 14, REffect::LargerBaleChamber),
-    rd!(RCategory::Processing, 1, "Faster Bale Press", 3000, 14, REffect::FasterBalePress),
-    rd!(RCategory::Processing, 1, "Raise Bale Quality", 5000, 14, REffect::RaiseBaleQuality),
+    rd!(RCategory::Processing, 1, "Larger Bale Chamber", 8000, 14, lv 6, REffect::LargerBaleChamber),
+    rd!(RCategory::Processing, 1, "Faster Bale Press", 3000, 14, lv 6, REffect::FasterBalePress),
+    rd!(RCategory::Processing, 1, "Raise Bale Quality", 5000, 14, lv 3, REffect::RaiseBaleQuality),
     rd!(RCategory::Processing, 2, "Hay Wrapper", 22000, 16, REffect::WasteLessMaterial),
     // AUTOMATION
     rd!(RCategory::Automation, 0, "Robot Arms", 120000, 9, REffect::PriorityArm),
@@ -205,6 +243,65 @@ pub const RESEARCH: [ResearchDef; 34] = [
     // WATER
     rd!(RCategory::Water, 0, "Sprinkler", 4000, NO_REQ, REffect::Sprinkler),
     rd!(RCategory::Water, 1, "Water Trough", 6000, 32, REffect::WaterTrough),
+
+    // ---- indices 34.. : expansion to mirror the real 391-level tree ----
+    // HAND WORK
+    rd!(RCategory::HandWork, 0, "Pick Strands", 4000, NO_REQ, lv 8, REffect::HandsPick),
+    rd!(RCategory::HandWork, 0, "Dig Speed", 6000, NO_REQ, lv 10, REffect::DigSpeed),
+    rd!(RCategory::HandWork, 1, "Bucket Rigs", 12000, 34, lv 6, REffect::BucketRigs),
+    rd!(RCategory::HandWork, 1, "Sprint Training", 8000, 25, lv 6, REffect::SprintTraining),
+    rd!(RCategory::HandWork, 1, "Warm Hands", 9000, 34, lv 5, REffect::WarmHands),
+    rd!(RCategory::HandWork, 2, "Compound Levers", 20000, 35, lv 4, REffect::CompoundLevers),
+    // YARD BUILDING (expansion)
+    rd!(RCategory::YardBuilding, 2, "Yard Lighting", 7000, 3, lv 5, REffect::YardLighting),
+    rd!(RCategory::YardBuilding, 3, "Second Shed", 25000, 1, lv 4, REffect::SecondShed),
+    rd!(RCategory::YardBuilding, 2, "Tool Racks", 15000, 1, lv 4, REffect::ToolRacks),
+    rd!(RCategory::YardBuilding, 4, "Second Yard", 150000, 40, lv 3, REffect::SecondYard),
+    // HAY LINES (expansion)
+    rd!(RCategory::HayLines, 2, "Longer Belts", 9000, 0, lv 8, REffect::LongerBelts),
+    rd!(RCategory::HayLines, 3, "Belt Lubrication", 5000, 4, lv 6, REffect::BeltLube),
+    rd!(RCategory::HayLines, 2, "Wide Belts", 13000, 0, lv 6, REffect::WideBelts),
+    rd!(RCategory::HayLines, 3, "Second Spur Line", 18000, 5, lv 4, REffect::SecondSpur),
+    rd!(RCategory::HayLines, 4, "Traffic Control", 30000, 6, lv 6, REffect::TrafficControl),
+    rd!(RCategory::HayLines, 4, "Sorting Algorithm", 40000, 7, lv 6, REffect::SortingAlgorithm),
+    rd!(RCategory::HayLines, 5, "Conveyor Crossroads", 80000, 46, lv 6, REffect::Crossroads),
+    rd!(RCategory::HayLines, 5, "Pneumatic Tubes", 90000, 8, lv 5, REffect::PneumaticTubes),
+    // POWER (expansion)
+    rd!(RCategory::Power, 2, "Generator Efficiency", 10000, 9, lv 8, REffect::GenEfficiency),
+    rd!(RCategory::Power, 3, "Steam Turbine", 40000, 11, lv 5, REffect::SteamTurbine),
+    rd!(RCategory::Power, 3, "Longer Spans", 10000, 10, lv 8, REffect::LongerSpans),
+    rd!(RCategory::Power, 3, "Longer Drops", 7000, 10, lv 6, REffect::LongerDrops),
+    rd!(RCategory::Power, 4, "Backup Generator", 60000, 48, lv 5, REffect::BackupGenerator),
+    rd!(RCategory::Power, 4, "Grid Redundancy", 70000, 50, lv 5, REffect::GridRedundancy),
+    // PROCESSING (expansion)
+    rd!(RCategory::Processing, 2, "Hay Pulp Line", 30000, 14, lv 6, REffect::PulpLine),
+    rd!(RCategory::Processing, 2, "Eco Brick Press", 35000, 14, lv 7, REffect::BrickPress),
+    rd!(RCategory::Processing, 3, "Paper Mill", 45000, 53, lv 4, REffect::PaperMill),
+    rd!(RCategory::Processing, 3, "Pelletizer", 50000, 54, lv 4, REffect::Pelletizer),
+    rd!(RCategory::Processing, 3, "The Silo", 80000, 14, lv 3, REffect::TheSilo),
+    rd!(RCategory::Processing, 3, "Bale Stacker", 22000, 15, lv 3, REffect::BaleStacker),
+    rd!(RCategory::Processing, 4, "Hydraulic Press", 65000, 16, lv 5, REffect::HydraulicPress),
+    rd!(RCategory::Processing, 4, "Bale Conveyor Exit", 40000, 58, lv 4, REffect::BaleExit),
+    // AUTOMATION (expansion)
+    rd!(RCategory::Automation, 1, "Arm Servo Upgrade", 25000, 19, lv 7, REffect::ArmServo),
+    rd!(RCategory::Automation, 2, "Extra Arm Batch", 50000, 59, lv 8, REffect::ExtraArms),
+    rd!(RCategory::Automation, 2, "Scanner Overclock", 30000, 17, lv 5, REffect::ScannerOverclock),
+    rd!(RCategory::Automation, 2, "Drone Fleet", 45000, 21, lv 2, REffect::DroneFleet),
+    rd!(RCategory::Automation, 3, "Arm Precision Joints", 60000, 60, lv 5, REffect::ArmJoints),
+    // SELLING (expansion)
+    rd!(RCategory::Selling, 2, "Online Marketplace", 20000, 22, lv 8, REffect::OnlineMarket),
+    rd!(RCategory::Selling, 3, "Loyal Customers", 15000, 63, lv 5, REffect::LoyalCustomers),
+    rd!(RCategory::Selling, 3, "Premium Branding", 35000, 23, lv 2, REffect::PremiumBrand),
+    rd!(RCategory::Selling, 4, "Global Shipping", 90000, 24, lv 4, REffect::GlobalShipping),
+    rd!(RCategory::Selling, 4, "Hay Sorting License", 120000, 65, lv 3, REffect::SortLicense),
+    // PROSPECTING (expansion)
+    rd!(RCategory::Prospecting, 2, "Deep Scan Mode", 25000, 29, lv 3, REffect::DeepScan),
+    rd!(RCategory::Prospecting, 2, "Treasure Maps", 30000, 30, lv 3, REffect::TreasureMaps),
+    // WATER (expansion)
+    rd!(RCategory::Water, 1, "Irrigation Loop", 9000, 32, lv 4, REffect::IrrigationLoop),
+    rd!(RCategory::Water, 1, "Dust Control", 6000, 32, lv 5, REffect::DustControl),
+    // FITNESS (expansion)
+    rd!(RCategory::Fitness, 2, "Hay Bale Marathon", 18000, 26, lv 4, REffect::BaleMarathon),
 ];
 
 pub struct Toast {
@@ -219,7 +316,7 @@ pub struct Game {
     pub money: i64, // cents
     pub owned: [bool; 9],
     pub selected: usize,
-    pub research: u64, // bitset over RESEARCH (40 bits)
+    pub research_lv: Vec<u8>, // level bought per RESEARCH card (0 = not bought)
     pub time: f64,
     pub dig_cd: f32,
     pub removed_count: u32,
@@ -259,7 +356,7 @@ impl Game {
             money: 0,
             owned,
             selected: 1,
-            research: 0,
+            research_lv: vec![0u8; RESEARCH.len()],
             time: 0.0,
             dig_cd: 0.0,
             removed_count: 0,
@@ -300,13 +397,25 @@ impl Game {
 
     // ----- research helpers -----
 
+    /// Card bought at least once?
     #[inline]
     pub fn has(&self, i: u32) -> bool {
-        i < 40 && (self.research >> i) & 1 == 1
+        self.lv(i) > 0
     }
 
+    /// Level bought for card i (0 = not bought).
+    #[inline]
+    pub fn lv(&self, i: u32) -> u32 {
+        match self.research_lv.get(i as usize) {
+            Some(&l) => l as u32,
+            None => 0,
+        }
+    }
+
+    /// Total LEVELS bought (the real tree counts levels, not cards:
+    /// "17 of 391 levels bought").
     pub fn research_count(&self) -> u32 {
-        self.research.count_ones()
+        self.research_lv.iter().map(|&l| l as u32).sum()
     }
 
     pub fn strand_price_mul(&self) -> f32 {
@@ -315,6 +424,16 @@ impl Game {
         if self.has(23) { m *= 1.6; } // BetterPrices2
         if self.has(24) { m *= 1.8; } // BetterPrices3
         if self.has(18) { m *= 1.15; } // Hay Wrapper
+        m *= 1.0 + 0.08 * self.lv(53) as f32; // Hay Pulp Line
+        m *= 1.0 + 0.05 * self.lv(54) as f32; // Eco Brick Press
+        m *= 1.0 + 0.05 * self.lv(55) as f32; // Paper Mill
+        m *= 1.0 + 0.05 * self.lv(56) as f32; // Pelletizer
+        m *= 1.0 + 0.04 * self.lv(63) as f32; // Online Marketplace
+        m *= 1.0 + 0.03 * self.lv(64) as f32; // Loyal Customers
+        m *= 1.0 + 0.05 * self.lv(65) as f32; // Premium Branding
+        m *= 1.0 + 0.05 * self.lv(76) as f32; // Global Shipping
+        m *= 1.0 + 0.04 * self.lv(77) as f32; // Hay Sorting License
+        m *= 1.0 + 0.03 * self.lv(69) as f32; // Dust Control
         m
     }
 
@@ -322,6 +441,11 @@ impl Game {
         let mut c = self.capacity;
         if self.has(27) { c += 150; } // StrongerArms
         if self.has(28) { c += 300; } // StrongerBack
+        c += 60 * self.lv(36);        // Bucket Rigs
+        c += 40 * self.lv(44);        // Wide Belts
+        c += 120 * self.lv(40);       // Second Shed
+        c += 200 * self.lv(57);       // The Silo
+        c += 150 * self.lv(80);       // Second Yard
         c
     }
 
@@ -329,6 +453,8 @@ impl Game {
         let mut s = 4.3;
         if self.has(25) { s += 1.0; }
         if self.has(26) { s += 1.4; }
+        s += 0.3 * self.lv(37) as f32;  // Sprint Training
+        s += 0.25 * self.lv(79) as f32; // Hay Bale Marathon
         s
     }
 
@@ -337,56 +463,84 @@ impl Game {
         let mut rate = 0.0f32;
         if self.owned[7] { rate += 25.0; }
         if self.owned[8] { rate += 120.0; }
-        if self.has(11) { rate *= 1.35; } // BiggerBoiler
-        if self.has(12) { rate *= 1.20; } // BiggerFirebox
-        if self.has(15) { rate *= 1.30; } // LargerBaleChamber
-        if self.has(16) { rate *= 1.25; } // FasterBalePress
-        if self.has(20) { rate *= 1.4; }  // Vacuum Line
+        rate *= 1.0 + 0.10 * self.lv(11) as f32; // Bigger Boiler
+        rate *= 1.0 + 0.07 * self.lv(12) as f32; // Bigger Firebox
+        rate *= 1.0 + 0.06 * self.lv(15) as f32; // Larger Bale Chamber
+        rate *= 1.0 + 0.05 * self.lv(16) as f32; // Faster Bale Press
+        if self.has(20) { rate *= 1.4; }          // Vacuum Line
+        rate *= 1.0 + 0.03 * self.lv(39) as f32; // Yard Lighting
+        rate *= 1.0 + 0.04 * self.lv(42) as f32; // Longer Belts
+        rate *= 1.0 + 0.05 * self.lv(43) as f32; // Belt Lubrication
+        rate *= 1.0 + 0.06 * self.lv(45) as f32; // Second Spur Line
+        rate *= 1.0 + 0.05 * self.lv(46) as f32; // Traffic Control
+        rate *= 1.0 + 0.05 * self.lv(47) as f32; // Sorting Algorithm
+        rate *= 1.0 + 0.05 * self.lv(48) as f32; // Generator Efficiency
+        rate *= 1.0 + 0.08 * self.lv(49) as f32; // Steam Turbine
+        rate *= 1.0 + 0.02 * self.lv(50) as f32; // Longer Spans
+        rate *= 1.0 + 0.02 * self.lv(51) as f32; // Longer Drops
+        rate *= 1.0 + 0.12 * self.lv(52) as f32; // Backup Generator
+        rate *= 1.0 + 0.04 * self.lv(72) as f32; // Grid Redundancy
+        rate *= 1.0 + 0.06 * self.lv(58) as f32; // Bale Stacker
+        rate *= 1.0 + 0.05 * self.lv(73) as f32; // Hydraulic Press
+        rate *= 1.0 + 0.05 * self.lv(74) as f32; // Bale Conveyor Exit
+        rate *= 1.0 + 0.06 * self.lv(59) as f32; // Arm Servo Upgrade
+        rate *= 1.0 + 0.08 * self.lv(60) as f32; // Extra Arm Batch
+        rate *= 1.0 + 0.05 * self.lv(61) as f32; // Scanner Overclock
+        rate *= 1.0 + 0.05 * self.lv(62) as f32; // Drone Fleet
+        rate *= 1.0 + 0.07 * self.lv(75) as f32; // Arm Precision Joints
+        rate *= 1.0 + 0.05 * self.lv(70) as f32; // Conveyor Crossroads
+        rate *= 1.0 + 0.06 * self.lv(71) as f32; // Pneumatic Tubes
+        rate *= 1.0 + 0.04 * self.lv(68) as f32; // Irrigation Loop
         rate
     }
 
     pub fn sale_fraction(&self) -> f32 {
         let mut f: f32 = 0.70;
-        if self.has(17) { f += 0.06; } // RaiseBaleQuality
-        if self.has(2) { f += 0.05; }  // WasteLessMaterial
+        f += 0.03 * self.lv(17) as f32; // RaiseBaleQuality (lv3 = +0.09)
+        f += 0.02 * self.lv(2) as f32;  // WasteLessMaterial (lv3 = +0.06)
         f.min(0.95)
     }
 
     pub fn detector_radius(&self) -> Option<f32> {
         if self.pure_mode { return None; }
         match self.current_tool() {
-            Tool::Detector => Some(if self.has(29) { 3.0 } else { 2.0 }),
-            Tool::DetectorII => Some(6.0),
+            Tool::Detector => Some(2.0 + 0.5 * self.lv(29) as f32 + self.lv(66) as f32),
+            Tool::DetectorII => Some(6.0 + self.lv(66) as f32),
             _ => None,
         }
     }
 
     pub fn pick_n(&self) -> u32 {
         if self.pure_mode { return 1; }
-        match self.current_tool() {
+        let base = match self.current_tool() {
             Tool::Hands => 1,
             Tool::Gloves => 3,
             _ => 1,
-        }
+        };
+        base + self.lv(34) // Pick Strands levels add to every pick
     }
 
     pub fn scoop_params(&self) -> Option<(f32, u32)> {
         if self.pure_mode { return None; }
+        let extra = self.lv(34) as u32;
         match self.current_tool() {
-            Tool::Pitchfork => Some((0.26, 14)),
-            Tool::Shovel => Some((0.45, 50)),
+            Tool::Pitchfork => Some((0.26, 14 + extra)),
+            Tool::Shovel => Some((0.45, 50 + extra)),
             _ => None,
         }
     }
 
     pub fn cooldown(&self) -> f32 {
-        match self.current_tool() {
+        let lv = self.lv(35) + self.lv(41); // Dig Speed + Tool Racks
+        let mul = (1.0 - 0.045 * lv as f32).max(0.60);
+        let base = match self.current_tool() {
             Tool::Hands => 0.30,
             Tool::Gloves => 0.26,
             Tool::Pitchfork => 0.42,
             Tool::Shovel => 0.55,
             _ => 0.30,
-        }
+        };
+        base * mul
     }
 
     pub fn buy_tool(&mut self, slot: usize) {
@@ -419,20 +573,39 @@ impl Game {
     }
 
     pub fn buy_research(&mut self, idx: u32) {
-        let def = &RESEARCH[idx as usize];
-        if self.has(idx) {
+        if idx as usize >= RESEARCH.len() {
             return;
+        }
+        let def = &RESEARCH[idx as usize];
+        let cur = self.lv(idx);
+        if cur >= def.levels {
+            return; // already maxed
         }
         if def.requires != NO_REQ && !self.has(def.requires) {
             self.toast("LOCKED - BUY THE PREREQUISITE FIRST");
             return;
         }
-        if self.money >= def.price {
-            self.money -= def.price;
-            self.research |= 1u64 << idx;
-            self.toast(format!("RESEARCHED: {} (-{})", def.name, format_money(def.price)));
+        let price = price_for_level(def, cur);
+        if self.money >= price {
+            self.money -= price;
+            self.research_lv[idx as usize] = (cur + 1) as u8;
+            if def.levels > 1 {
+                self.toast(format!(
+                    "RESEARCHED: {} LV {}/{} (-{})",
+                    def.name,
+                    cur + 1,
+                    def.levels,
+                    format_money(price)
+                ));
+            } else {
+                self.toast(format!("RESEARCHED: {} (-{})", def.name, format_money(price)));
+            }
         } else {
-            self.toast(format!("NOT ENOUGH MONEY ({} / {})", format_money(self.money), format_money(def.price)));
+            self.toast(format!(
+                "NOT ENOUGH MONEY ({} / {})",
+                format_money(self.money),
+                format_money(price)
+            ));
         }
     }
 
@@ -660,10 +833,11 @@ fn save_best_time(t: f64) {
     let _ = std::fs::write(BEST_FILE, format!("{}", t));
 }
 
-// ----- full save game (v2) -----
+// ----- full save game (v3: leveled research; reads v2 saves too) -----
 
-const SAVE_MAGIC: &[u8; 4] = b"FND2";
-const SAVE_VERSION: u32 = 2;
+const SAVE_MAGIC: &[u8; 4] = b"FND3";
+const SAVE_MAGIC_V2: &[u8; 4] = b"FND2";
+const SAVE_VERSION: u32 = 3;
 
 pub fn save_game(game: &Game, world: &World, path: &str) -> std::io::Result<()> {
     use std::io::Write;
@@ -676,7 +850,11 @@ pub fn save_game(game: &Game, world: &World, path: &str) -> std::io::Result<()> 
     f.extend_from_slice(&(game.carried as u64).to_le_bytes());
     f.extend_from_slice(&(game.capacity as u64).to_le_bytes());
     f.extend_from_slice(&(game.earned_total as u64).to_le_bytes());
-    f.extend_from_slice(&game.research.to_le_bytes());
+    // leveled research: u8 count + one byte per card
+    f.push(RESEARCH.len() as u8);
+    for &l in &game.research_lv {
+        f.push(l);
+    }
     for o in &game.owned {
         f.push(*o as u8);
     }
@@ -697,11 +875,16 @@ pub struct LoadResult {
 
 pub fn load_game(path: &str) -> Option<(Game, u32, Vec<u8>, u32)> {
     let data = std::fs::read(path).ok()?;
-    if data.len() < 60 || &data[0..4] != SAVE_MAGIC {
+    if data.len() < 60 {
+        return None;
+    }
+    let is_v3 = &data[0..4] == SAVE_MAGIC;
+    let is_v2 = &data[0..4] == SAVE_MAGIC_V2;
+    if !is_v3 && !is_v2 {
         return None;
     }
     let ver = u32::from_le_bytes(data[4..8].try_into().ok()?);
-    if ver != SAVE_VERSION {
+    if ver != SAVE_VERSION && ver != 2 {
         return None;
     }
     let mut o = 8;
@@ -716,7 +899,30 @@ pub fn load_game(path: &str) -> Option<(Game, u32, Vec<u8>, u32)> {
     let carried = ru64()? as u32;
     let capacity = ru64()? as u32;
     let earned = ru64()? as i64;
-    let research = ru64()?;
+
+    // research: v3 = leveled byte array, v2 = u64 bitset (0/1 per card)
+    let mut game = Game::new(seed, false);
+    if is_v3 {
+        let n = data[o] as usize;
+        o += 1;
+        if data.len() < o + n {
+            return None;
+        }
+        for (i, &l) in data[o..o + n].iter().enumerate() {
+            if i < game.research_lv.len() {
+                game.research_lv[i] = l.min(RESEARCH[i].levels.min(255) as u8);
+            }
+        }
+        o += n;
+    } else {
+        let research = ru64()?;
+        for i in 0..RESEARCH.len().min(64) {
+            if (research >> i) & 1 == 1 {
+                game.research_lv[i] = 1;
+            }
+        }
+    }
+
     let mut owned = [false; 9];
     for i in 0..9 {
         owned[i] = data[o + i] != 0;
@@ -740,12 +946,11 @@ pub fn load_game(path: &str) -> Option<(Game, u32, Vec<u8>, u32)> {
     o += blen;
     let won_time = f64::from_le_bytes(data[o..o + 8].try_into().ok()?);
 
-    let mut game = Game::new(seed, pure);
+    game.pure_mode = pure;
     game.money = money;
     game.carried = carried;
     game.capacity = capacity.max(600);
     game.earned_total = earned;
-    game.research = research;
     game.owned = owned;
     game.owned[0] = true;
     game.owned[1] = true;
