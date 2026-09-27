@@ -533,11 +533,17 @@ impl Pipelines {
     }
 }
 
-        // ---------------- static world mesh (barn + outdoors merged) ----------------
+        // ---------------- static world mesh (barn + machines + outdoors merged) ----------------
         let barn = crate::mesh::barn_mesh();
+        let machines = crate::mesh::machines_mesh();
         let outdoor = crate::mesh::outdoor_mesh();
         let mut verts = barn.0;
         let mut idx = barn.1;
+        let base = verts.len() as u16;
+        verts.extend(machines.0);
+        for i in machines.1 {
+            idx.push(i + base);
+        }
         let base = verts.len() as u16;
         verts.extend(outdoor.0);
         for i in outdoor.1 {

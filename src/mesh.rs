@@ -1118,10 +1118,363 @@ pub fn detector_mesh() -> (Vec<Vertex>, Vec<u16>) {
     (mb.verts, mb.idx)
 }
 
+/// Barn perimeter belt loop (x, z), closed. All points outside the pile dome
+/// (r >= 16.2) and inside the walls (x 23 / z 17). Matches shot 3's network.
+pub const BELT_RING: [(f32, f32); 17] = [
+    (18.5, 3.0), (18.0, -2.0), (16.5, -7.0), (14.0, -12.0), (8.0, -16.0),
+    (0.0, -16.4), (-8.0, -16.0), (-14.0, -12.5), (-18.0, -7.0), (-20.0, 0.0),
+    (-18.5, 7.0), (-14.0, 12.5), (-8.0, 15.8), (0.0, 16.2), (8.0, 15.8),
+    (14.0, 12.0), (17.5, 7.0),
+];
+/// Dead-end spur belts branching off the ring (open paths).
+pub const BELT_SPURS: [&[(f32, f32)]; 3] = [
+    &[(-18.0, -7.0), (-17.5, -10.5), (-16.0, -13.5)],
+    &[(14.0, -12.0), (16.0, -14.2), (19.5, -15.3)],
+    &[(-8.0, 15.8), (-11.0, 13.8), (-13.5, 10.5)],
+];
+pub const BELT_H: f32 = 0.52;
+const BELT_W: f32 = 0.44; // half width
+
+fn stamped(mb: &mut MeshBuilder, part: MeshBuilder, at: Vec3, yaw: f32) {
+    let m = Mat4::from_translation(at) * Mat4::from_rotation_y(yaw);
+    append_mesh(mb, part, m);
+}
+
+/// One straight belt segment from a to b (floor plan), top at BELT_H:
+/// dark rubber slab w/ animated cleats (flag 0.993), light side rails, legs.
+fn belt_seg(mb: &mut MeshBuilder, a: (f32, f32), b: (f32, f32)) {
+    let (ax, az) = a;
+    let (bx, bz) = b;
+    let dx = bx - ax;
+    let dz = bz - az;
+    let len = (dx * dx + dz * dz).sqrt();
+    if len < 0.05 {
+        return;
+    }
+    let yaw = -dz.atan2(dx);
+    let mut part = MeshBuilder::new();
+    let rubber = Vec3::new(0.15, 0.15, 0.16);
+    let rail = Vec3::new(0.60, 0.61, 0.64);
+    let legc = Vec3::new(0.22, 0.22, 0.24);
+    part.boxf(
+        Vec3::new(-0.06, BELT_H - 0.10, -BELT_W),
+        Vec3::new(len + 0.06, BELT_H, BELT_W),
+        rubber,
+        0.993,
+    );
+    // light edge rails (shot 3: gray belts with pale borders)
+    part.boxf(
+        Vec3::new(-0.06, BELT_H - 0.15, -BELT_W - 0.07),
+        Vec3::new(len + 0.06, BELT_H - 0.05, -BELT_W + 0.01),
+        rail,
+        0.0,
+    );
+    part.boxf(
+        Vec3::new(-0.06, BELT_H - 0.15, BELT_W - 0.01),
+        Vec3::new(len + 0.06, BELT_H - 0.05, BELT_W + 0.07),
+        rail,
+        0.0,
+    );
+    let n_legs = (len / 2.2) as usize + 1;
+    for i in 0..=n_legs {
+        let x = 0.35 + i as f32 * (len - 0.7) / n_legs as f32;
+        part.boxf(
+            Vec3::new(x - 0.045, 0.0, -0.26),
+            Vec3::new(x + 0.045, BELT_H - 0.10, 0.26),
+            legc,
+            0.0,
+        );
+    }
+    stamped(mb, part, Vec3::new(ax, 0.0, az), yaw);
+}
+
+/// Sagging wire between two anchor points (thin square-section catenary).
+fn wire(mb: &mut MeshBuilder, a: Vec3, b: Vec3, sag: f32, col: Vec3) {
+    let segs = 6;
+    let mut prev_top: [Vec3; 4] = [Vec3::ZERO; 4];
+    for i in 0..=segs {
+        let t = i as f32 / segs as f32;
+        let p = a.lerp(b, t) - Vec3::new(0.0, sag * 4.0 * t * (1.0 - t), 0.0);
+        let r = 0.022;
+        let corners = [
+            Vec3::new(p.x - r, p.y, p.z - r),
+            Vec3::new(p.x + r, p.y, p.z - r),
+            Vec3::new(p.x + r, p.y, p.z + r),
+            Vec3::new(p.x - r, p.y, p.z + r),
+        ];
+        if i > 0 {
+            for k in 0..4 {
+                let k2 = (k + 1) & 3;
+                let va = mb.v(prev_top[k], Vec3::ZERO, col);
+                let vb = mb.v(prev_top[k2], Vec3::ZERO, col);
+                let vc = mb.v(corners[k2], Vec3::ZERO, col);
+                let vd = mb.v(corners[k], Vec3::ZERO, col);
+                mb.quad(va, vb, vc, vd);
+            }
+        }
+        prev_top = corners;
+    }
+}
+
+/// ALL the yard machines, baked into the static world mesh (still 1 draw call):
+/// perimeter + spur conveyor network, power poles w/ wires, steam boiler,
+/// tube launcher, water trough, sprinkler, market stand, wooden crates.
+pub fn machines_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+
+    // ---- conveyor network ----
+    for i in 0..BELT_RING.len() {
+        let a = BELT_RING[i];
+        let b = BELT_RING[(i + 1) % BELT_RING.len()];
+        belt_seg(&mut mb, a, b);
+        // corner platform so turns look continuous
+        let mut c = MeshBuilder::new();
+        c.boxf(
+            Vec3::new(-BELT_W, BELT_H - 0.10, -BELT_W),
+            Vec3::new(BELT_W, BELT_H, BELT_W),
+            Vec3::new(0.15, 0.15, 0.16),
+            0.993,
+        );
+        stamped(&mut mb, c, Vec3::new(a.0, 0.0, a.1), 0.0);
+    }
+    for spur in BELT_SPURS {
+        for w in spur.windows(2) {
+            belt_seg(&mut mb, (w[0].0, w[0].1), (w[1].0, w[1].1));
+        }
+    }
+
+    // ---- power poles + wires (like the lamp posts ringing shot 3) ----
+    let poles: [(f32, f32); 10] = [
+        (-21.0, -13.0), (-21.8, -5.0), (-21.5, 3.0), (-19.0, 8.0), (-20.5, 11.5),
+        (5.5, 16.6), (16.0, 15.9), (21.3, 9.0), (21.9, 0.0), (20.5, -8.5),
+    ];
+    let wood = Vec3::new(0.30, 0.24, 0.17);
+    let steel = Vec3::new(0.35, 0.36, 0.38);
+    for &(px, pz) in poles.iter() {
+        let mut p = MeshBuilder::new();
+        p.boxf(Vec3::new(-0.09, 0.0, -0.09), Vec3::new(0.09, 3.4, 0.09), wood, 0.995);
+        p.boxf(Vec3::new(-0.55, 3.05, -0.05), Vec3::new(0.55, 3.17, 0.05), wood, 0.995);
+        // insulators + lamp head
+        p.boxf(Vec3::new(-0.42, 3.17, -0.05), Vec3::new(-0.34, 3.30, 0.05), steel, 0.0);
+        p.boxf(Vec3::new(0.34, 3.17, -0.05), Vec3::new(0.42, 3.30, 0.05), steel, 0.0);
+        p.boxf(Vec3::new(-0.14, 3.28, -0.14), Vec3::new(0.14, 3.44, 0.14), steel, 0.0);
+        p.boxf(Vec3::new(-0.10, 3.20, -0.10), Vec3::new(0.10, 3.28, 0.10), Vec3::new(0.95, 0.90, 0.70), 0.91);
+        stamped(&mut mb, p, Vec3::new(px, 0.0, pz), 0.0);
+    }
+    for w in poles.windows(2) {
+        let a = Vec3::new(w[0].0 + 0.40, 3.22, w[0].1);
+        let b = Vec3::new(w[1].0 - 0.40, 3.22, w[1].1);
+        wire(&mut mb, a, b, a.distance(b) * 0.06, Vec3::new(0.08, 0.08, 0.09));
+        let a2 = Vec3::new(w[0].0 - 0.40, 3.22, w[0].1);
+        let b2 = Vec3::new(w[1].0 + 0.40, 3.22, w[1].1);
+        wire(&mut mb, a2, b2, a2.distance(b2) * 0.06, Vec3::new(0.08, 0.08, 0.09));
+    }
+
+    // ---- steam boiler (west wall): horizontal tank + chimney + glowing firebox
+    {
+        let steel = Vec3::new(0.45, 0.47, 0.50);
+        let dark = Vec3::new(0.20, 0.20, 0.22);
+        let mut b = MeshBuilder::new();
+        // tank: vertical cylinder + sphere caps, laid along Z
+        let mut tank = MeshBuilder::new();
+        tank.cylinder(0.85, -1.2, 1.2, 12, steel);
+        let mut cap_lo = MeshBuilder::new();
+        cap_lo.sphere(0.85, 12, 5, steel);
+        append_mesh(&mut tank, cap_lo, Mat4::from_translation(Vec3::new(0.0, -1.2, 0.0)));
+        let mut cap_hi = MeshBuilder::new();
+        cap_hi.sphere(0.85, 12, 5, steel);
+        append_mesh(&mut tank, cap_hi, Mat4::from_translation(Vec3::new(0.0, 1.2, 0.0)));
+        // lay it down: rotate about Z so the axis runs along X, then lift onto legs
+        let laid = Mat4::from_translation(Vec3::new(0.0, 1.30, 0.0))
+            * Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        append_mesh(&mut b, tank, laid);
+        // legs
+        b.boxf(Vec3::new(-0.6, 0.0, -0.55), Vec3::new(-0.42, 0.55, 0.55), dark, 0.0);
+        b.boxf(Vec3::new(0.42, 0.0, -0.55), Vec3::new(0.6, 0.55, 0.55), dark, 0.0);
+        // firebox with warm glow (LED red flag => flicker)
+        b.boxf(Vec3::new(-0.55, 0.0, -0.55), Vec3::new(0.55, 0.62, 0.55), dark, 0.0);
+        b.boxf(Vec3::new(-0.28, 0.12, -0.62), Vec3::new(0.28, 0.55, -0.56), Vec3::new(1.0, 0.45, 0.10), 0.90);
+        stamped(&mut mb, b, Vec3::new(-21.6, 0.0, -11.0), std::f32::consts::FRAC_PI_2);
+        // chimney at the rear end
+        let mut ch = MeshBuilder::new();
+        ch.cylinder(0.32, 0.0, 0.3, 10, dark);
+        ch.cylinder(0.26, 0.3, 4.3, 10, dark);
+        stamped(&mut mb, ch, Vec3::new(-21.6, 2.1, -13.3), 0.0);
+    }
+
+    // ---- tube launcher (NW): big angled tube aimed at the pile ----
+    {
+        let mut t = MeshBuilder::new();
+        let gray = Vec3::new(0.52, 0.54, 0.57);
+        let dark = Vec3::new(0.18, 0.18, 0.20);
+        t.tube(0.52, 0.0, 4.6, 12, gray);
+        // muzzle ring + bands
+        t.tube(0.60, 4.3, 4.6, 12, dark);
+        t.tube(0.58, 1.4, 1.75, 12, dark);
+        t.tube(0.58, 2.9, 3.25, 12, dark);
+        // A-frame support
+        t.boxf(Vec3::new(-0.9, 0.0, 0.0), Vec3::new(-0.75, 2.2, 0.12), dark, 0.0);
+        t.boxf(Vec3::new(0.75, 0.0, 0.0), Vec3::new(0.9, 2.2, 0.12), dark, 0.0);
+        // tilt the whole tube 32 deg toward +X, then place
+        let mut tilted = MeshBuilder::new();
+        append_mesh(
+            &mut tilted,
+            t,
+            Mat4::from_rotation_z(0.56) * Mat4::from_translation(Vec3::new(0.0, 0.35, 0.0)),
+        );
+        stamped(&mut mb, tilted, Vec3::new(-19.8, 0.0, 14.8), 0.9);
+    }
+
+    // ---- hay wrapper (west, near belt A) is a dynamic prop; add its pad ----
+    {
+        let mut pad = MeshBuilder::new();
+        pad.boxf(Vec3::new(-1.3, 0.0, -1.0), Vec3::new(1.3, 0.08, 1.0), Vec3::new(0.30, 0.30, 0.32), 0.0);
+        stamped(&mut mb, pad, Vec3::new(-19.5, 0.0, -6.0), 0.0);
+    }
+
+    // ---- water trough (north wall) ----
+    {
+        let mut tr = MeshBuilder::new();
+        let wood = Vec3::new(0.42, 0.33, 0.22);
+        tr.boxf(Vec3::new(-3.0, 0.0, -0.4), Vec3::new(3.0, 0.55, 0.4), wood, 0.995);
+        tr.boxf(Vec3::new(-2.85, 0.42, -0.30), Vec3::new(2.85, 0.48, 0.30), Vec3::new(0.30, 0.52, 0.62), 0.0);
+        stamped(&mut mb, tr, Vec3::new(-11.5, 0.0, 16.3), 0.0);
+    }
+
+    // ---- sprinkler tripod (south-east) ----
+    {
+        let mut s = MeshBuilder::new();
+        let dark = Vec3::new(0.25, 0.26, 0.28);
+        for i in 0..3 {
+            let a = i as f32 * std::f32::consts::TAU / 3.0;
+            let mut leg = MeshBuilder::new();
+            leg.boxf(
+                Vec3::new(-0.03, 0.0, -0.03),
+                Vec3::new(0.03, 0.75, 0.03),
+                dark,
+                0.0,
+            );
+            let m = Mat4::from_translation(Vec3::new(a.cos() * 0.16, 0.0, a.sin() * 0.16))
+                * Mat4::from_rotation_z(a.cos() * 0.35)
+                * Mat4::from_rotation_x(-a.sin() * 0.35);
+            append_mesh(&mut s, leg, m);
+        }
+        s.cylinder(0.05, 0.70, 0.95, 8, dark);
+        s.cylinder(0.10, 0.95, 1.02, 8, Vec3::new(0.65, 0.68, 0.70));
+        stamped(&mut mb, s, Vec3::new(9.5, 0.0, -14.2), 0.0);
+    }
+
+    // ---- market stand (NW corner, faces the pile): posts + striped awning ----
+    {
+        let mut st = MeshBuilder::new();
+        let wood = Vec3::new(0.46, 0.36, 0.24);
+        for sx in [-1.15f32, 1.15] {
+            for sz in [-0.75f32, 0.75] {
+                st.boxf(
+                    Vec3::new(sx - 0.05, 0.0, sz - 0.05),
+                    Vec3::new(sx + 0.05, 2.15, sz + 0.05),
+                    wood,
+                    0.995,
+                );
+            }
+        }
+        // counter
+        st.boxf(Vec3::new(-1.2, 0.85, -0.85), Vec3::new(1.2, 1.0, 0.85), wood, 0.995);
+        // awning: alternating red/cream stripes
+        for i in 0..6 {
+            let x0 = -1.35 + i as f32 * 0.45;
+            let col = if i % 2 == 0 {
+                Vec3::new(0.72, 0.16, 0.13)
+            } else {
+                Vec3::new(0.90, 0.86, 0.76)
+            };
+            st.boxf(Vec3::new(x0, 2.15, -0.95), Vec3::new(x0 + 0.45, 2.23, 1.05), col, 0.0);
+        }
+        st.text3d(
+            "FRESH HAY",
+            Vec3::new(-0.85, 1.30, -0.86),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            0.16,
+            0.02,
+            Vec3::new(0.14, 0.10, 0.06),
+        );
+        stamped(&mut mb, st, Vec3::new(-16.0, 0.0, 14.0), 0.6);
+    }
+
+    // ---- wooden crates (scattered clusters, like shot 3) ----
+    let crates: [(f32, f32, f32); 6] = [
+        (-21.2, 14.8, 0.3),
+        (-20.2, 14.2, 0.9),
+        (16.8, -13.8, 0.5),
+        (18.6, -12.4, 0.15),
+        (19.8, -14.2, 0.7),
+        (-20.8, 5.2, 0.2),
+    ];
+    for &(cx, cz, yaw) in crates.iter() {
+        let mut c = MeshBuilder::new();
+        c.boxf(Vec3::new(-0.55, 0.0, -0.55), Vec3::new(0.55, 1.0, 0.55), Vec3::new(0.48, 0.37, 0.23), 0.995);
+        c.boxf(Vec3::new(-0.57, 0.42, -0.57), Vec3::new(0.57, 0.56, 0.57), Vec3::new(0.40, 0.30, 0.18), 0.995);
+        stamped(&mut mb, c, Vec3::new(cx, 0.0, cz), yaw);
+    }
+
+    (mb.verts, mb.idx)
+}
+
+/// Hay wrapper: gray machine with a big horizontal rotating drum + rollers.
+pub fn wrapper_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let gray = Vec3::new(0.58, 0.59, 0.62);
+    let dark = Vec3::new(0.22, 0.22, 0.24);
+    mb.box_(Vec3::new(-1.1, 0.25, -0.7), Vec3::new(1.1, 0.9, 0.7), gray);
+    // big horizontal drum
+    let mut drum = MeshBuilder::new();
+    drum.cylinder(0.52, -0.75, 0.75, 12, dark);
+    let m = Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2) * Mat4::from_translation(Vec3::new(0.0, 1.35, 0.0));
+    append_mesh(&mut mb, drum, m);
+    // feed ramp + rollers
+    mb.funnel(0.35, 1.15, 0.55, 0.62, 8, dark);
+    mb.cylinder(0.12, 0.15, 0.35, 8, dark);
+    mb.cylinder(0.10, 0.0, 0.25, 8, dark);
+    // status LED
+    mb.boxf(Vec3::new(-0.10, 0.95, -0.72), Vec3::new(0.10, 1.05, -0.70), Vec3::new(0.1, 0.85, 0.2), 0.91);
+    (mb.verts, mb.idx)
+}
+
+/// Scout drone: quadcopter body + 4 rotor discs + camera dot.
+pub fn drone_mesh() -> (Vec<Vertex>, Vec<u16>) {
+    let mut mb = MeshBuilder::new();
+    let dark = Vec3::new(0.13, 0.13, 0.15);
+    let gray = Vec3::new(0.50, 0.52, 0.55);
+    mb.box_(Vec3::new(-0.22, -0.07, -0.22), Vec3::new(0.22, 0.10, 0.22), dark);
+    mb.box_(Vec3::new(-0.10, 0.10, -0.10), Vec3::new(0.10, 0.16, 0.10), gray);
+    // camera gimbal
+    mb.sphere(0.05, 8, 4, Vec3::new(0.05, 0.05, 0.06));
+    for sx in [-1.0f32, 1.0] {
+        for sz in [-1.0f32, 1.0] {
+            mb.box_(
+                Vec3::new(sx * 0.22 - 0.025 * sx, 0.02, sz * 0.22 - 0.025 * sz),
+                Vec3::new(sx * 0.42 + 0.025 * sx, 0.05, sz * 0.42 + 0.025 * sz),
+                dark,
+            );
+            // rotor disc (thin cylinder)
+            let mut rotor = MeshBuilder::new();
+            rotor.cylinder(0.24, -0.006, 0.006, 10, Vec3::new(0.30, 0.30, 0.33));
+            append_mesh(
+                &mut mb,
+                rotor,
+                Mat4::from_translation(Vec3::new(sx * 0.42, 0.06, sz * 0.42)),
+            );
+        }
+    }
+    (mb.verts, mb.idx)
+}
+
 /// All prop meshes, indexed:
 /// 0 haystack core dome, 1 needle, 2 detector, 3..12 valuables,
 /// 13 baler, 14 vacuum, 15 pitchfork, 16 bucket, 17 robot arm, 18 scanner,
-/// 19 hay ball (belt), 20 loose hay clump (pile crumbs).
+/// 19 hay ball (belt), 20 loose hay clump (pile crumbs), 21 hay wrapper,
+/// 22 scout drone.
 pub fn build_all_meshes() -> Vec<(Vec<Vertex>, Vec<u16>)> {
     let mut out: Vec<(Vec<Vertex>, Vec<u16>)> = Vec::new();
 
@@ -1203,6 +1556,10 @@ pub fn build_all_meshes() -> Vec<(Vec<Vertex>, Vec<u16>)> {
     let mut mb = MeshBuilder::new();
     mb.dome(0.10, 0.07, 7, 3, Vec3::new(0.60, 0.46, 0.22));
     out.push(mb.build());
+    // 21: hay wrapper
+    out.push(wrapper_mesh());
+    // 22: scout drone
+    out.push(drone_mesh());
 
     out
 }

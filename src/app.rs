@@ -61,6 +61,7 @@ pub struct App {
 
     tossed: Vec<Tossed>,
     balls: Vec<Ball>,
+    loop_balls: Vec<Ball>,
     clumps: Vec<Vec3>,
     dig_anim: f32,
     bob_phase: f32,
@@ -145,6 +146,7 @@ impl App {
             show_fps: false,
             tossed: Vec::with_capacity(2048),
             balls,
+            loop_balls: Vec::new(),
             clumps: Vec::new(),
             dig_anim: 0.0,
             bob_phase: 0.0,
@@ -634,7 +636,55 @@ impl App {
                 b.t = 0.0;
             }
         }
+        // perimeter ring belt balls (closed loop around the yard)
+        let ring_active = belt_active || self.game.auto_rate() > 0.0;
+        while self.loop_balls.len() < 12 {
+            let i = self.loop_balls.len() as f32;
+            self.loop_balls.push(Ball {
+                t: i / 12.0,
+                speed: 0.11,
+                offset: (i * 2.3).sin() * 0.04,
+            });
+        }
+        for b in self.loop_balls.iter_mut() {
+            if ring_active {
+                let spd = if self.game.has(4) { b.speed * 1.6 } else { b.speed };
+                b.t += spd * dt;
+            }
+            if b.t >= 1.0 {
+                b.t -= 1.0;
+            }
+        }
         let _ = moving;
+    }
+
+    /// Position on the perimeter belt loop (closed polyline), t in [0,1).
+    fn ring_point(t: f32) -> Vec3 {
+        const RING: [(f32, f32); 17] = crate::mesh::BELT_RING;
+        let mut total = 0.0;
+        let mut lens = [0.0f32; 17];
+        for i in 0..RING.len() {
+            let a = RING[i];
+            let b = RING[(i + 1) % RING.len()];
+            let d = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+            lens[i] = d;
+            total += d;
+        }
+        let mut dist = t.fract() * total;
+        for i in 0..RING.len() {
+            if dist <= lens[i] {
+                let a = RING[i];
+                let b = RING[(i + 1) % RING.len()];
+                let f = if lens[i] > 0.0 { dist / lens[i] } else { 0.0 };
+                return Vec3::new(
+                    a.0 + (b.0 - a.0) * f,
+                    crate::mesh::BELT_H + 0.10,
+                    a.1 + (b.1 - a.1) * f,
+                );
+            }
+            dist -= lens[i];
+        }
+        Vec3::new(RING[0].0, crate::mesh::BELT_H + 0.10, RING[0].1)
     }
 
     fn ground_height(&self, p: Vec3) -> f32 {
@@ -661,7 +711,7 @@ impl App {
             }
         }
         // solid props
-        const BOXES: [(Vec3, Vec3); 4] = [
+        const BOXES: [(Vec3, Vec3); 13] = [
             // sell stall body
             (Vec3::new(17.9, 0.0, 3.9), Vec3::new(20.1, 3.0, 8.1)),
             // blackboard
@@ -670,6 +720,22 @@ impl App {
             (Vec3::new(-16.2, 0.0, -15.2), Vec3::new(-11.8, 3.0, -10.8)),
             // door-side shop belt
             (Vec3::new(-11.2, 0.0, -12.8), Vec3::new(-8.2, 1.2, -12.0)),
+            // steam boiler
+            (Vec3::new(-22.6, 0.0, -12.2), Vec3::new(-20.6, 2.5, -9.8)),
+            // tube launcher
+            (Vec3::new(-21.0, 0.0, 13.6), Vec3::new(-18.6, 3.5, 16.0)),
+            // hay wrapper
+            (Vec3::new(-20.7, 0.0, -7.1), Vec3::new(-18.3, 1.9, -4.9)),
+            // vacuum
+            (Vec3::new(-19.7, 0.0, 11.3), Vec3::new(-17.3, 2.6, 13.7)),
+            // baler row
+            (Vec3::new(15.5, 0.0, -2.6), Vec3::new(17.7, 2.3, -0.4)),
+            (Vec3::new(15.3, 0.0, 1.9), Vec3::new(17.5, 2.3, 4.1)),
+            (Vec3::new(15.9, 0.0, 7.4), Vec3::new(18.1, 2.3, 9.6)),
+            // water trough
+            (Vec3::new(-14.6, 0.0, 15.8), Vec3::new(-8.4, 0.7, 16.8)),
+            // market stand
+            (Vec3::new(-17.3, 0.0, 12.7), Vec3::new(-14.7, 2.4, 15.3)),
         ];
         for (mn, mx) in BOXES {
             if p.x > mn.x - 0.35
@@ -769,41 +835,83 @@ impl App {
                 push_batch(&prop_insts, &mut batches, k.mesh_index(), prop_insts.len() - first);
             }
         }
-        // machines
-        if self.game.owned[7] {
-            let m =
-                Mat4::from_translation(Vec3::new(9.5, 0.0, 9.0)) * Mat4::from_rotation_y(-0.6);
-            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.6]));
-            push_batch(&prop_insts, &mut batches, 13, 1);
-        }
-        if self.game.owned[8] {
-            let m = Mat4::from_translation(Vec3::new(-10.5, 0.0, 9.5))
+        // machines: the full yard fleet, ALWAYS visible (like the reference
+        // screenshots); unlocked machines pulse via the working flag (0.6),
+        // idle ones render with the standard material (0.0).
+        {
+            const ON: f32 = 0.6;
+            const OFF: f32 = 0.0;
+            // 3 hay balers on the east row (shot 3: baler cluster by the belts)
+            const BALERS: [(Vec3, f32); 3] = [
+                (Vec3::new(16.6, 0.0, -1.5), -1.35),
+                (Vec3::new(16.4, 0.0, 3.0), -1.20),
+                (Vec3::new(17.0, 0.0, 8.5), -0.75),
+            ];
+            for (p, yaw) in BALERS {
+                let m = Mat4::from_translation(p) * Mat4::from_rotation_y(yaw);
+                let f = if self.game.owned[7] { ON } else { OFF };
+                prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            }
+            push_batch(&prop_insts, &mut batches, 13, 3);
+            // vacuum line unit (west)
+            let m = Mat4::from_translation(Vec3::new(-18.5, 0.0, 12.5))
                 * Mat4::from_rotation_y(0.8);
-            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.6]));
+            let f = if self.game.owned[8] { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
             push_batch(&prop_insts, &mut batches, 14, 1);
-        }
-        if self.game.has(19) {
+            // hay wrapper on its west pad
+            let m = Mat4::from_translation(Vec3::new(-19.5, 0.0, -6.0))
+                * Mat4::from_rotation_y(1.35);
+            let f = if self.game.has(18) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
+            push_batch(&prop_insts, &mut batches, 21, 1);
+            // robot arm fleet ringing the pile along the belt network
+            const ARMS: [(f32, f32); 14] = [
+                (5.0, 19.5), (35.0, 17.2), (55.0, 19.0), (125.0, 19.6), (135.0, 17.5),
+                (155.0, 18.2), (175.0, 18.0), (195.0, 18.0), (215.0, 17.6), (235.0, 17.0),
+                (248.0, 16.5), (305.0, 19.4), (325.0, 19.3), (345.0, 19.3),
+            ];
+            let f = if self.game.has(19) { ON } else { OFF };
             let first = prop_insts.len();
-            for i in 0..6 {
-                let ang = i as f32 * std::f32::consts::TAU / 6.0 + 0.26;
-                let p = Vec3::new(ang.cos() * 17.6, 0.0, ang.sin() * 17.6);
+            for (deg, r) in ARMS {
+                let a = deg.to_radians();
+                let p = Vec3::new(a.cos() * r, 0.0, a.sin() * r);
                 let m = Mat4::from_translation(p)
-                    * Mat4::from_rotation_y(-ang + std::f32::consts::FRAC_PI_2);
-                prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
+                    * Mat4::from_rotation_y(-a + std::f32::consts::FRAC_PI_2);
+                prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
             }
             push_batch(&prop_insts, &mut batches, 17, prop_insts.len() - first);
-        }
-        if self.game.has(0) {
-            let m = Mat4::from_translation(Vec3::new(10.6, 0.0, 2.4))
-                * Mat4::from_rotation_y(1.25);
-            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
+            // quality scanner arch straddling the east belt run
+            let m = Mat4::from_translation(Vec3::new(18.25, 0.0, 0.5))
+                * Mat4::from_rotation_y(0.0995);
+            let f = if self.game.has(17) { ON } else { OFF };
+            prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, f]));
             push_batch(&prop_insts, &mut batches, 18, 1);
+            // scout drone circling the pile
+            if self.game.has(21) {
+                let t = self.time as f32;
+                let p = Vec3::new(
+                    (t * 0.25).cos() * 7.0,
+                    7.6 + (t * 1.1).sin() * 0.5,
+                    (t * 0.25).sin() * 7.0,
+                );
+                let m = Mat4::from_translation(p) * Mat4::from_rotation_y(t * 1.7);
+                prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
+                push_batch(&prop_insts, &mut batches, 22, 1);
+            }
         }
         // belt balls
         if self.game.has(0) || self.game.auto_rate() > 0.0 {
             let first = prop_insts.len();
             for b in &self.balls {
                 let p = BELT_P0.lerp(BELT_P1, b.t) + Vec3::new(0.0, 0.10 + b.offset, 0.0);
+                let m = Mat4::from_translation(p)
+                    * Mat4::from_rotation_y(self.time as f32 * 2.0);
+                prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));
+            }
+            // perimeter ring belt balls
+            for b in &self.loop_balls {
+                let p = Self::ring_point(b.t) + Vec3::new(0.0, b.offset, 0.0);
                 let m = Mat4::from_translation(p)
                     * Mat4::from_rotation_y(self.time as f32 * 2.0);
                 prop_insts.push(PropInst::from_mat(m, [1.0, 1.0, 1.0, 0.0]));

@@ -83,3 +83,27 @@ fn save_roundtrip() {
     assert!(w2.restore_removed(&bitset, removed), "bitset must restore");
     assert_eq!(w2.removed_count, 0, "fresh dig state round-trips empty");
 }
+
+#[test]
+fn machines_mesh_fits_static_world() {
+    // the merged static world (barn + machines + outdoors) must stay within
+    // u16 index space, and every machine position must sit outside the pile
+    let barn = find_the_needle::mesh::barn_mesh();
+    let machines = find_the_needle::mesh::machines_mesh();
+    let outdoor = find_the_needle::mesh::outdoor_mesh();
+    let total = barn.0.len() + machines.0.len() + outdoor.0.len();
+    assert!(
+        total < 65535,
+        "merged world {} verts exceeds u16 index space",
+        total
+    );
+    assert!(!machines.0.is_empty(), "machines mesh must not be empty");
+    let max_idx = machines.1.iter().copied().max().unwrap_or(0) as usize;
+    assert!(max_idx < machines.0.len(), "index out of bounds in machines mesh");
+    // belt ring stays outside the pile dome and inside the walls
+    for &(x, z) in find_the_needle::mesh::BELT_RING.iter() {
+        let r = (x * x + z * z).sqrt();
+        assert!(r >= 16.0, "ring point ({x},{z}) inside pile (r={r})");
+        assert!(x.abs() < 22.8 && z.abs() < 16.9, "ring point ({x},{z}) outside walls");
+    }
+}
